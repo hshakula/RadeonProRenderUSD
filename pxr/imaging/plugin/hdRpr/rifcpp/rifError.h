@@ -57,7 +57,7 @@ inline bool IsErrorCheck(char const* file, char const* function, size_t line, co
 
 class Error : public std::runtime_error {
 public:
-    Error(const char* messageOnFail, rif_int errorStatus)
+    Error(const char* messageOnFail, rif_int errorStatus = RIF_SUCCESS)
         : std::runtime_error(ConstructErrorMessage(messageOnFail, errorStatus)) {
 
     }
