@@ -4,7 +4,11 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-bool HdRprRectLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
+HdRprRectLight::HdRprRectLight(SdfPath const& id)
+    : HdRprGeometryLight(id) {
+}
+
+bool HdRprRectLight::SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
     float width = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->width).Get<float>());
     float height = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->height).Get<float>());
 
@@ -16,10 +20,6 @@ bool HdRprRectLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath cons
     return isDirty;
 }
 
-RprApiObjectPtr HdRprRectLight::CreateLightMesh(HdRprApi* rprApi) {
-    return rprApi->CreateRectLightMesh(m_width, m_height);
-}
-
 GfVec3f HdRprRectLight::NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& inColor) {
     const GfVec4f ox(m_width, 0., 0., 0.);
     const GfVec4f oy(0., m_height, 0., 0.);
@@ -28,6 +28,14 @@ GfVec3f HdRprRectLight::NormalizeLightColor(const GfMatrix4f& transform, const G
     const GfVec4f oyTrans = oy * transform;
 
     return static_cast<float>(1. / (oxTrans.GetLength() * oyTrans.GetLength())) * inColor;
+}
+
+HdRprLightPool::LightMeshType HdRprRectLight::GetLightMeshType() const {
+    return HdRprLightPool::kRectLightMesh;
+}
+
+GfMatrix4f HdRprRectLight::GetLightMeshTransform() const {
+    return GfMatrix4f(1.0f).SetScale({m_width, m_height, 1.0f});
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -1,7 +1,5 @@
 #include "lightBase.h"
 #include "renderParam.h"
-#include "material.h"
-#include "materialFactory.h"
 #include "rprApi.h"
 
 #include "pxr/imaging/hd/sceneDelegate.h"
@@ -9,90 +7,60 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-static float computeLightIntensity(float intensity, float exposure) {
-    return intensity * exp2(exposure);
-}
+HdRprLightBase::HdRprLightBase(SdfPath const& id)
+    : HdLight(id) {
 
-bool HdRprLightBase::IsDirtyMaterial(const GfVec3f& emissionColor) {
-    bool isDirty = (m_emmisionColor != emissionColor);
-    m_emmisionColor = emissionColor;
-    return isDirty;
 }
 
 void HdRprLightBase::Sync(HdSceneDelegate* sceneDelegate,
                           HdRenderParam* renderParam,
                           HdDirtyBits* dirtyBits) {
-
-    auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
-    auto rprApi = rprRenderParam->AcquireRprApiForEdit();
-
     SdfPath const& id = GetId();
-    HdDirtyBits bits = *dirtyBits;
 
-    if (bits & DirtyBits::DirtyTransform) {
+    uint32_t dirtyFlags = ChangeTracker::Clean;
+
+    if (*dirtyBits & DirtyBits::DirtyTransform) {
         m_transform = GfMatrix4f(sceneDelegate->GetLightParamValue(id, HdLightTokens->transform).Get<GfMatrix4d>());
+        dirtyFlags |= ChangeTracker::DirtyTransform;
     }
 
-    bool newLight = false;
-    if (bits & DirtyBits::DirtyParams) {
-        // Get the color of the light
+    if (*dirtyBits & DirtyBits::DirtyParams) {
+        if (SyncParams(sceneDelegate, id)) {
+            dirtyFlags |= ChangeTracker::DirtyParams;
+        }
+
         GfVec3f color = sceneDelegate->GetLightParamValue(id, HdPrimvarRoleTokens->color).Get<GfVec3f>();
+        float intensity = sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity).Get<float>();
+        float exposure = sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure).Get<float>();
 
-        // Extract intensity
-        const float intensity = sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity).Get<float>();
-
-        // Extract the exposure of the light
-        const float exposure = sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure).Get<float>();
-
-        // Get the colorTemerature of the light
         if (sceneDelegate->GetLightParamValue(id, HdLightTokens->enableColorTemperature).Get<bool>()) {
             GfVec3f temperatureColor = UsdLuxBlackbodyTemperatureAsRgb(sceneDelegate->GetLightParamValue(id, HdLightTokens->colorTemperature).Get<float>());
-            color[0] *= temperatureColor[0];
-            color[1] *= temperatureColor[1];
-            color[2] *= temperatureColor[2];
+            color = GfCompMult(color, temperatureColor);
         }
 
-        // Compute
-        const float illuminationIntensity = computeLightIntensity(intensity, exposure);
+        float illuminationIntensity = intensity * exp2(exposure);
 
-        if (SyncGeomParams(sceneDelegate, id) || !m_lightMesh) {
-            m_lightMesh = CreateLightMesh(rprApi);
-        }
-
-        if (!m_lightMesh) {
-            TF_CODING_ERROR("Light Mesh was not created");
-            *dirtyBits = DirtyBits::Clean;
-            return;
-        }
-
-        const bool isNormalize = sceneDelegate->GetLightParamValue(id, HdLightTokens->normalize).Get<bool>();
+        const bool normalize = sceneDelegate->GetLightParamValue(id, HdLightTokens->normalize).Get<bool>();
         const GfVec3f illumColor = color * illuminationIntensity;
-        const GfVec3f emissionColor = (isNormalize) ? NormalizeLightColor(m_transform, illumColor) : illumColor;
+        const GfVec3f emissionColor = (normalize) ? NormalizeLightColor(m_transform, illumColor) : illumColor;
 
-        if (!m_lightMaterial || IsDirtyMaterial(emissionColor)) {
-            MaterialAdapter matAdapter(EMaterialType::EMISSIVE, MaterialParams{{HdLightTokens->color, VtValue(emissionColor)}});
-            m_lightMaterial = rprApi->CreateMaterial(matAdapter);
+        if (m_emissionColor != emissionColor) {
+            m_emissionColor = emissionColor;
+            dirtyFlags |= ChangeTracker::DirtyEmissionColor;
         }
-
-        if (!m_lightMaterial) {
-            TF_CODING_ERROR("Light material was not created");
-        }
-
-        rprApi->SetMeshMaterial(m_lightMesh.get(), m_lightMaterial.get());
-        newLight = true;
     }
 
-    if (newLight || ((bits & DirtyTransform) && m_lightMesh)) {
-        rprApi->SetMeshTransform(m_lightMesh.get(), m_transform);
+    if (dirtyFlags & ChangeTracker::AllDirty) {
+        auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
+        Update(rprRenderParam, dirtyFlags);        
     }
 
     *dirtyBits = DirtyBits::Clean;
 }
 
-
 HdDirtyBits HdRprLightBase::GetInitialDirtyBitsMask() const {
     return DirtyBits::DirtyTransform
-        | DirtyBits::DirtyParams;
+         | DirtyBits::DirtyParams;
 }
 
 void HdRprLightBase::Finalize(HdRenderParam* renderParam) {

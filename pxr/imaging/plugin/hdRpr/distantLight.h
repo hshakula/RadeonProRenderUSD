@@ -1,35 +1,25 @@
 #ifndef HDRPR_DISTANT_LIGHT_H
 #define HDRPR_DISTANT_LIGHT_H
 
-#include "pxr/pxr.h"
-
-#include "pxr/base/gf/matrix4f.h"
-#include "pxr/imaging/hd/sprim.h"
-#include "pxr/usd/sdf/path.h"
-
-#include "rprApi.h"
+#include "lightBase.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-class HdRprDistantLight : public HdSprim {
+class HdRprDistantLight : public HdRprLightBase {
 
 public:
-    HdRprDistantLight(SdfPath const& id)
-        : HdSprim(id) {
-
-    }
-
-    void Sync(HdSceneDelegate* sceneDelegate,
-              HdRenderParam* renderParam,
-              HdDirtyBits* dirtyBits) override;
-
-    HdDirtyBits GetInitialDirtyBitsMask() const override;
-
-    void Finalize(HdRenderParam* renderParam) override;
+    HdRprDistantLight(SdfPath const& id);
+    ~HdRprDistantLight() override = default;
 
 protected:
-    RprApiObjectPtr m_rprLight;
-    GfMatrix4f m_transform;
+    bool SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) override;
+
+    GfVec3f NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& emissionColor) override;
+
+    void Update(HdRprRenderParam* renderParam, uint32_t dirtyFlags) override;
+
+private:
+    float m_angle = std::numeric_limits<float>::quiet_NaN();
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

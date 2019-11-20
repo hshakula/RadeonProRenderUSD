@@ -1,12 +1,18 @@
 #include "cylinderLight.h"
 #include "rprApi.h"
+
 #include "pxr/imaging/hd/sceneDelegate.h"
 
 #include <cmath>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-bool HdRprCylinderLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
+HdRprCylinderLight::HdRprCylinderLight(SdfPath const& id)
+    : HdRprGeometryLight(id) {
+
+}
+
+bool HdRprCylinderLight::SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
     float radius = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->radius).Get<float>());
     float length = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->length).Get<float>());
 
@@ -16,10 +22,6 @@ bool HdRprCylinderLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath 
     m_length = length;
 
     return isDirty;
-}
-
-RprApiObjectPtr HdRprCylinderLight::CreateLightMesh(HdRprApi* rprApi) {
-    return rprApi->CreateCylinderLightMesh(m_radius, m_length);
 }
 
 GfVec3f HdRprCylinderLight::NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& inColor) {
@@ -49,6 +51,14 @@ GfVec3f HdRprCylinderLight::NormalizeLightColor(const GfMatrix4f& transform, con
 
     float scaleFactor = cylinderArea / unitCylinderArea;
     return inColor / scaleFactor;
+}
+
+HdRprLightPool::LightMeshType HdRprCylinderLight::GetLightMeshType() const {
+    return HdRprLightPool::kCylinderLightMesh;
+}
+
+GfMatrix4f HdRprCylinderLight::GetLightMeshTransform() const {
+    return GfMatrix4f(1.0f).SetScale({m_length, m_radius, m_radius});
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -6,7 +6,11 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-bool HdRprSphereLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
+HdRprSphereLight::HdRprSphereLight(SdfPath const& id)
+    : HdRprGeometryLight(id) {
+}
+
+bool HdRprSphereLight::SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
     float radius = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->radius).Get<float>());
 
     bool isDirty = radius != m_radius;
@@ -14,10 +18,6 @@ bool HdRprSphereLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath co
     m_radius = radius;
 
     return isDirty;
-}
-
-RprApiObjectPtr HdRprSphereLight::CreateLightMesh(HdRprApi* rprApi) {
-    return rprApi->CreateSphereLightMesh(m_radius);
 }
 
 GfVec3f HdRprSphereLight::NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& inColor) {
@@ -46,6 +46,14 @@ GfVec3f HdRprSphereLight::NormalizeLightColor(const GfMatrix4f& transform, const
     }
 
     return inColor * scaleFactor;
+}
+
+HdRprLightPool::LightMeshType HdRprSphereLight::GetLightMeshType() const {
+    return HdRprLightPool::kSphereLightMesh;
+}
+
+GfMatrix4f HdRprSphereLight::GetLightMeshTransform() const {
+    return GfMatrix4f(1.0f).SetScale(m_radius);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

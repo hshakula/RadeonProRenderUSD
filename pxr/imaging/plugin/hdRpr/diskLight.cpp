@@ -6,11 +6,12 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-const TfTokenVector k_requiredGeometryParam = {
-    HdLightTokens->radius,
-};
+HdRprDiskLight::HdRprDiskLight(SdfPath const & id)
+    : HdRprGeometryLight(id) {
 
-bool HdRprDiskLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
+}
+
+bool HdRprDiskLight::SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
     float radius = std::abs(sceneDelegate->GetLightParamValue(id, HdLightTokens->radius).Get<float>());
 
     bool isDirty = radius != m_radius;
@@ -18,10 +19,6 @@ bool HdRprDiskLight::SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath cons
     m_radius = radius;
 
     return isDirty;
-}
-
-RprApiObjectPtr HdRprDiskLight::CreateLightMesh(HdRprApi* rprApi) {
-    return rprApi->CreateDiskLightMesh(m_radius);
 }
 
 GfVec3f HdRprDiskLight::NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& inColor) {
@@ -37,5 +34,14 @@ GfVec3f HdRprDiskLight::NormalizeLightColor(const GfMatrix4f& transform, const G
     float scaleFactor = diskArea / unitDiskArea;
     return inColor / scaleFactor;
 }
+
+HdRprLightPool::LightMeshType HdRprDiskLight::GetLightMeshType() const {
+    return HdRprLightPool::kDiskLightMesh;
+}
+
+GfMatrix4f HdRprDiskLight::GetLightMeshTransform() const {
+    return GfMatrix4f(1.0f).SetScale({m_radius, m_radius, 1.0f});
+}
+
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -9,17 +9,13 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-class HdRprApi;
+class HdRprRenderParam;
 class RprApiObject;
 using RprApiObjectPtr = std::unique_ptr<RprApiObject>;
 
 class HdRprLightBase : public HdLight {
 public:
-    HdRprLightBase(SdfPath const& id)
-        : HdLight(id) {
-
-    }
-
+    HdRprLightBase(SdfPath const& id);
     ~HdRprLightBase() override = default;
 
     void Sync(HdSceneDelegate* sceneDelegate,
@@ -31,20 +27,24 @@ public:
     void Finalize(HdRenderParam* renderParam) override;
 
 protected:
-    virtual bool SyncGeomParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) = 0;
-
-    virtual RprApiObjectPtr CreateLightMesh(HdRprApi* rprApi) = 0;
+    virtual bool SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) = 0;
 
     // Normalize Light Color with surface area
-    virtual GfVec3f NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& emmisionColor) = 0;
+    virtual GfVec3f NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& emissionColor) = 0;
 
-private:
-    bool IsDirtyMaterial(const GfVec3f& emmisionColor);
+    enum ChangeTracker : uint32_t {
+        Clean = 0,
+        AllDirty = ~0u,
+        DirtyParams = 1 << 0,
+        DirtyTransform = 1 << 1,
+        DirtyEmissionColor = 1 << 2,
+    };
 
-private:
-    RprApiObjectPtr m_lightMesh;
-    RprApiObjectPtr m_lightMaterial;
-    GfVec3f m_emmisionColor = GfVec3f(0.0f);
+    virtual void Update(HdRprRenderParam* renderParam, uint32_t dirtyFlags) = 0;
+
+protected:
+    std::unique_ptr<RprApiObject, std::function<void(RprApiObject*)>> m_light;
+    GfVec3f m_emissionColor;
     GfMatrix4f m_transform;
 };
 

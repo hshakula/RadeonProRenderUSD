@@ -1,76 +1,59 @@
 #include "distantLight.h"
 #include "renderParam.h"
 
-#include "pxr/imaging/hd/light.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
-#include "pxr/usd/usdLux/blackbody.h"
 #include "pxr/usd/usdLux/tokens.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-static float computeLightIntensity(float intensity, float exposure) {
-    return intensity * exp2(exposure);
+HdRprDistantLight::HdRprDistantLight(SdfPath const& id)
+    : HdRprLightBase(id) {
+
 }
 
-void HdRprDistantLight::Sync(HdSceneDelegate* sceneDelegate,
-                             HdRenderParam* renderParam,
-                             HdDirtyBits* dirtyBits) {
+bool HdRprDistantLight::SyncParams(HdSceneDelegate* sceneDelegate, SdfPath const& id) {
+    float angle = std::abs(sceneDelegate->GetLightParamValue(id, UsdLuxTokens->angle).Get<float>());
 
-    auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
-    auto rprApi = rprRenderParam->AcquireRprApiForEdit();
+    bool isDirty = angle != m_angle;
 
-    HdDirtyBits bits = *dirtyBits;
-    auto& id = GetId();
+    m_angle = angle;
 
-    if (bits & HdLight::DirtyTransform) {
-        m_transform = GfMatrix4f(sceneDelegate->GetLightParamValue(id, HdLightTokens->transform).Get<GfMatrix4d>());
-    }
+    return isDirty;
+}
+
+GfVec3f HdRprDistantLight::NormalizeLightColor(const GfMatrix4f& transform, const GfVec3f& emissionColor) {
+    return emissionColor;
+}
+
+void HdRprDistantLight::Update(HdRprRenderParam* renderParam, uint32_t dirtyFlags) {
+    auto rprApi = renderParam->AcquireRprApiForEdit();
 
     bool newLight = false;
-    if (bits & HdLight::DirtyParams) {
-        m_rprLight = nullptr;
-
-        float intensity = sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity).Get<float>();
-        float exposure = sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure).Get<float>();
-        float computedIntensity = computeLightIntensity(intensity, exposure);
-
-        GfVec3f color = sceneDelegate->GetLightParamValue(id, HdPrimvarRoleTokens->color).Get<GfVec3f>();
-        if (sceneDelegate->GetLightParamValue(id, HdLightTokens->enableColorTemperature).Get<bool>()) {
-            GfVec3f temperatureColor = UsdLuxBlackbodyTemperatureAsRgb(sceneDelegate->GetLightParamValue(id, HdLightTokens->colorTemperature).Get<float>());
-            color[0] *= temperatureColor[0];
-            color[1] *= temperatureColor[1];
-            color[2] *= temperatureColor[2];
-        }
-
-        if (!m_rprLight) {
-            m_rprLight = rprApi->CreateDirectionalLight();
+    if (!m_light) {
+        auto lightPool = renderParam->GetLightPool();
+        auto light = lightPool->CreateDistantLight(rprApi);
+        if (light) {
+            m_light = decltype(m_light)(light, [lightPool](RprApiObject* light) {
+                lightPool->ReleaseDistantLight(light);
+            });
             newLight = true;
         }
-
-        float angle = sceneDelegate->GetLightParamValue(id, UsdLuxTokens->angle).Get<float>();
-        // TODO: implement physically correct conversion
-        float shadowSoftness = std::min(angle * (M_PI / 180.0) * M_PI, 1.0);
-
-        rprApi->SetDirectionalLightAttributes(m_rprLight.get(), color * computedIntensity, shadowSoftness);
     }
 
-    if (newLight || ((bits & HdLight::DirtyTransform) && m_rprLight)) {
-        rprApi->SetLightTransform(m_rprLight.get(), m_transform);
+    if (m_light) {
+        if (newLight || (dirtyFlags & ChangeTracker::DirtyTransform)) {
+            rprApi->SetLightTransform(m_light.get(), m_transform);
+        }
+
+        if (newLight ||
+            (dirtyFlags & ChangeTracker::DirtyEmissionColor) ||
+            (dirtyFlags & ChangeTracker::DirtyParams)) {
+            // TODO: implement physically correct conversion
+            float shadowSoftness = std::min(m_angle * (M_PI / 180.0) * M_PI, 1.0);
+
+            rprApi->SetDirectionalLightAttributes(m_light.get(), m_emissionColor, shadowSoftness);
+        }
     }
-
-    *dirtyBits = HdLight::Clean;
-}
-
-
-HdDirtyBits HdRprDistantLight::GetInitialDirtyBitsMask() const {
-    return HdLight::AllDirty;
-}
-
-void HdRprDistantLight::Finalize(HdRenderParam* renderParam) {
-    // Stop render thread to safely release resources
-    static_cast<HdRprRenderParam*>(renderParam)->GetRenderThread()->StopRender();
-
-    HdSprim::Finalize(renderParam);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

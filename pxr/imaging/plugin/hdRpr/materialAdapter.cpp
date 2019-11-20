@@ -278,10 +278,10 @@ void MaterialAdapter::PopulateUsdPreviewSurface(const MaterialParams& params, co
             albedoColor = VtValToVec4f(paramValue);
             m_vec4fRprParams[RPR_UBER_MATERIAL_INPUT_DIFFUSE_COLOR] = albedoColor;
         } else if (paramName == HdRprMaterialTokens->emissiveColor) {
-            GfVec4f emmisionColor = VtValToVec4f(paramValue);
-            if (!IsColorBlack(emmisionColor)) {
+            GfVec4f emissionColor = VtValToVec4f(paramValue);
+            if (!IsColorBlack(emissionColor)) {
                 m_vec4fRprParams[RPR_UBER_MATERIAL_INPUT_EMISSION_WEIGHT] = GfVec4f(1.0f);
-                m_vec4fRprParams[RPR_UBER_MATERIAL_INPUT_EMISSION_COLOR] = emmisionColor;
+                m_vec4fRprParams[RPR_UBER_MATERIAL_INPUT_EMISSION_COLOR] = emissionColor;
             }
         } else if (paramName == HdRprMaterialTokens->useSpecularWorkflow) {
             useSpecular = paramValue.Get<int>();

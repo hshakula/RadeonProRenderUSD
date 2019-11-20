@@ -127,6 +127,8 @@ pxr_plugin(hdRpr
         materialFactory
         materialAdapter
         lightBase
+        lightPool
+        geometryLight
         domeLight
         rectLight
         distantLight
