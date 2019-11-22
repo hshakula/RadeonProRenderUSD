@@ -7,8 +7,10 @@
 
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/renderIndex.h"
+#include "pxr/base/trace/reporter.h"
 
 #include <GL/glew.h>
+#include <fstream>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -60,6 +62,12 @@ void HdRprRenderPass::_Execute(HdRenderPassStateSharedPtr const& renderPassState
             }
         }
         m_renderParam->GetRenderThread()->StartRender();
+
+        static int traceCount = 0;
+        std::ofstream reportFile("trace" + std::to_string(traceCount++) + ".txt");
+        auto reporter = TraceReporter::GetGlobalReporter();
+        reporter->Report(reportFile);
+        reporter->ClearTree();
     }
 }
 

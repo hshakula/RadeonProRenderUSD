@@ -256,11 +256,15 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         };
 
         if (geomSubsets.empty() || geomSubsets.size() == 1) {
+            TRACE_FUNCTION_SCOPE("Create RPR mesh");
+
             if (auto rprMesh = rprApi->CreateMesh(m_points, m_faceVertexIndices, m_normals, m_normalIndices, m_uvs, m_uvIndices, m_faceVertexCounts, m_topology.GetOrientation())) {
                 setMeshMaterial(rprMesh, geomSubsets.empty() ? m_cachedMaterialId : geomSubsets[0].materialId);
                 m_rprMeshes.push_back(std::move(rprMesh));
             }
         } else {
+            TRACE_FUNCTION_SCOPE("Create RPR meshes for each geomSubset");
+
             // GeomSubset may reference face subset in any given order so we need to be able to
             //   randomly lookup face indexes but each face may be of an arbitrary number of vertices
             std::vector<int> indexesOffsetPrefixSum;
@@ -318,7 +322,12 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     }
 
     if (!m_rprMeshes.empty()) {
-        if (newMesh || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) {
+        TRACE_FUNCTION_SCOPE("Set mesh auxiliary data");
+
+        if ((newMesh || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) &&
+            m_enableSubdiv && m_refineLevel > 0) {
+            TRACE_FUNCTION_SCOPE("Set mesh subdiv tags");
+
             PxOsdSubdivTags subdivTags = sceneDelegate->GetSubdivTags(id);
 
             // XXX: RPR does not support this
@@ -343,12 +352,16 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         }
 
         if (newMesh || (*dirtyBits & HdChangeTracker::DirtyDisplayStyle)) {
+            TRACE_FUNCTION_SCOPE("Set mesh refine level");
+
             for (auto& rprMesh : m_rprMeshes) {
                 rprApi->SetMeshRefineLevel(rprMesh.get(), m_enableSubdiv ? m_refineLevel : 0);
             }
         }
 
         if (newMesh || (*dirtyBits & HdChangeTracker::DirtyVisibility)) {
+            TRACE_FUNCTION_SCOPE("Set mesh visibility");
+
             _UpdateVisibility(sceneDelegate, dirtyBits);
             for (auto& rprMesh : m_rprMeshes) {
                 rprApi->SetMeshVisibility(rprMesh.get(), _sharedData.visible);
@@ -359,7 +372,8 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
             if (auto instancer = static_cast<HdRprInstancer*>(sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()))) {
                 auto transforms = instancer->ComputeTransforms(id);
                 if (transforms.empty()) {
-                    // Reset to state without instances
+                    TRACE_FUNCTION_SCOPE("Reset to state without instances");
+
                     m_rprMeshInstances.clear();
                     for (int i = 0; i < m_rprMeshes.size(); ++i) {
                         rprApi->SetMeshVisibility(m_rprMeshes[i].get(), _sharedData.visible);
@@ -375,6 +389,7 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
                     for (int i = 0; i < m_rprMeshes.size(); ++i) {
                         auto& meshInstances = m_rprMeshInstances[i];
                         if (meshInstances.size() != transforms.size()) {
+                            TRACE_FUNCTION_SCOPE("Create mesh instances");
                             if (meshInstances.size() > transforms.size()) {
                                 meshInstances.resize(transforms.size());
                             } else {
@@ -384,6 +399,7 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
                             }
                         }
 
+                        TRACE_FUNCTION_SCOPE("Set mesh instance transforms");
                         for (int j = 0; j < transforms.size(); ++j) {
                             rprApi->SetMeshTransform(meshInstances[j].get(), GfMatrix4f(transforms[j]));
                         }
@@ -396,6 +412,8 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         }
 
         if (updateTransform) {
+            TRACE_FUNCTION_SCOPE("Set mesh transforms");
+
             for (auto& rprMesh : m_rprMeshes) {
                 rprApi->SetMeshTransform(rprMesh.get(), m_transform);
             }

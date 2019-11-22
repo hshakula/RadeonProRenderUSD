@@ -1,5 +1,6 @@
 #include "imageCache.h"
 #include "rprcpp/rprContext.h"
+#include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/glf/glew.h"
 #include "pxr/imaging/glf/uvTextureData.h"
 #include "pxr/imaging/glf/image.h"
@@ -13,6 +14,8 @@ ImageCache::ImageCache(rpr::Context* context)
 }
 
 std::shared_ptr<rpr::Image> ImageCache::GetImage(std::string const& path) {
+    HD_TRACE_FUNCTION();
+
     ImageMetadata md(path);
 
     auto it = m_cache.find(path);
@@ -33,6 +36,7 @@ std::shared_ptr<rpr::Image> ImageCache::GetImage(std::string const& path) {
 std::shared_ptr<rpr::Image> ImageCache::CreateImage(std::string const& path) {
     try {
         if (!GlfImage::IsSupportedImageFile(path)) {
+            TRACE_FUNCTION_SCOPE("Create RPR image from file");
             return std::make_shared<rpr::Image>(m_context->GetHandle(), path.c_str());
         }
 
@@ -69,6 +73,7 @@ std::shared_ptr<rpr::Image> ImageCache::CreateImage(std::string const& path) {
                     return nullptr;
             }
 
+            TRACE_FUNCTION_SCOPE("Create RPR image from decoded data");
             return std::make_shared<rpr::Image>(m_context->GetHandle(), textureData->ResizedWidth(), textureData->ResizedHeight(), format, textureData->GetRawBuffer());
         } else {
             TF_RUNTIME_ERROR("Failed to load image %s: unsupported format", path.c_str());

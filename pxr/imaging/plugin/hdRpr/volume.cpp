@@ -83,6 +83,7 @@ void HdRprVolume::Sync(
     HdRenderParam* renderParam,
     HdDirtyBits* dirtyBits,
     TfToken const& reprName) {
+    HD_TRACE_FUNCTION();
 
     auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();

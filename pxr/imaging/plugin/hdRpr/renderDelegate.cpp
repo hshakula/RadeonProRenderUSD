@@ -75,10 +75,13 @@ HdRprDelegate::HdRprDelegate() {
         m_rprApi->AbortRender();
     });
     m_renderThread.StartThread();
+
+    TraceCollector::GetInstance().SetEnabled(true);
 }
 
 HdRprDelegate::~HdRprDelegate() {
     g_rprApi = nullptr;
+    TraceCollector::GetInstance().SetEnabled(false);
 }
 
 HdRenderParam* HdRprDelegate::GetRenderParam() const {

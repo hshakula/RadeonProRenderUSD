@@ -36,6 +36,7 @@ HdRprMaterial::HdRprMaterial(SdfPath const& id) : HdMaterial(id) {
 void HdRprMaterial::Sync(HdSceneDelegate* sceneDelegate,
                          HdRenderParam* renderParam,
                          HdDirtyBits* dirtyBits) {
+    HD_TRACE_FUNCTION();
 
     auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();

@@ -22,6 +22,7 @@ bool HdRprLightBase::IsDirtyMaterial(const GfVec3f& emissionColor) {
 void HdRprLightBase::Sync(HdSceneDelegate* sceneDelegate,
                           HdRenderParam* renderParam,
                           HdDirtyBits* dirtyBits) {
+    HD_TRACE_FUNCTION();
 
     auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();
