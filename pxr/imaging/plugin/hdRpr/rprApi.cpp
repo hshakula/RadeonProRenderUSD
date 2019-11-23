@@ -8,17 +8,19 @@
 
 #include "config.h"
 #include "imageCache.h"
+#include "imageLoader.h"
 #include "material.h"
-#include "materialFactory.h"
 #include "materialAdapter.h"
 #include "renderBuffer.h"
+#include "rprApiMaterial.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/vec2f.h"
-#include "pxr/imaging/pxOsd/tokens.h"
+#include "pxr/base/work/loops.h"
 #include "pxr/base/arch/fileSystem.h"
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/thisPlugin.h"
+#include "pxr/imaging/pxOsd/tokens.h"
 #include "pxr/imaging/glf/uvTextureData.h"
 
 #include <RadeonProRender.h>
@@ -38,21 +40,12 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PUBLIC_TOKENS(HdRprAovTokens, HD_RPR_AOV_TOKENS);
-
-TF_DEFINE_PRIVATE_TOKENS(RprApiObjectActionTokens,
-    (attach) \
-    (contextSetScene)
-);
+TF_DEFINE_PUBLIC_TOKENS(HdRprApiObjectActionTokens, HD_RPR_API_OBJECT_ACTION_TOKENS);
 
 namespace {
 
 using RecursiveLockGuard = std::lock_guard<std::recursive_mutex>;
 std::recursive_mutex g_rprAccessMutex;
-
-template <typename T, typename... Args>
-std::unique_ptr<T> make_unique(Args&&... args) {
-    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-}
 
 bool ArchCreateDirectory(const char* path) {
 #ifdef WIN32
@@ -110,13 +103,13 @@ public:
         m_scene = RprApiObject::Wrap(scene);
 
         if (RPR_ERROR_CHECK(rprContextSetScene(m_rprContext->GetHandle(), scene), "Fail to set scene")) return;
-        m_scene->AttachOnReleaseAction(RprApiObjectActionTokens->contextSetScene, [this](void* scene) {
-            if (m_rprContext->GetActivePluginType() != rpr::PluginType::HYBRID) {
+        if (m_rprContext->GetActivePluginType() != rpr::PluginType::HYBRID) {
+            m_scene->AttachOnReleaseAction(HdRprApiObjectActionTokens->unsetScene, [this](void* scene) {
                 if (!RPR_ERROR_CHECK(rprContextSetScene(m_rprContext->GetHandle(), nullptr), "Failed to unset scene")) {
                     m_dirtyFlags |= ChangeTracker::DirtyScene;
                 }
-            }
-        });
+            });
+        }
     }
 
     void CreateCamera() {
@@ -129,7 +122,7 @@ public:
         m_camera = RprApiObject::Wrap(camera);
 
         RPR_ERROR_CHECK(rprSceneSetCamera(m_scene->GetHandle(), camera), "Fail to to set camera to scene");
-        m_camera->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* camera) {
+        m_camera->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* camera) {
             if (!RPR_ERROR_CHECK(rprSceneSetCamera(m_scene->GetHandle(), nullptr), "Failed to unset camera")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -234,7 +227,7 @@ public:
         if (RPR_ERROR_CHECK(rprSceneAttachShape(m_scene->GetHandle(), mesh), "Fail attach mesh to scene")) {
             return nullptr;
         }
-        meshObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* mesh) {
+        meshObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* mesh) {
             if (!RPR_ERROR_CHECK(rprSceneDetachShape(m_scene->GetHandle(), mesh), "Failed to detach mesh from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -308,9 +301,9 @@ public:
         }
     }
 
-    void SetMeshMaterial(rpr_shape mesh, const RprApiMaterial* material) {
+    void SetMeshMaterial(RprApiObject* mesh, HdRprApiMaterial* material) {
         RecursiveLockGuard rprLock(g_rprAccessMutex);
-        m_rprMaterialFactory->AttachMaterialToShape(mesh, material);
+        material->AttachToShape(mesh);
         m_dirtyFlags |= ChangeTracker::DirtyScene;
     }
 
@@ -321,9 +314,9 @@ public:
         }
     }
 
-    void SetCurveMaterial(rpr_curve curve, const RprApiMaterial* material) {
+    void SetCurveMaterial(RprApiObject* curve, HdRprApiMaterial* material) {
         RecursiveLockGuard rprLock(g_rprAccessMutex);
-        m_rprMaterialFactory->AttachMaterialToCurve(curve, material);
+        material->AttachToCurve(curve);
         m_dirtyFlags |= ChangeTracker::DirtyScene;
     }
 
@@ -344,7 +337,7 @@ public:
     }
 #else
     void AttachCurveToScene(RprApiObject* curve) {
-        if (curve->HasOnReleaseAction(RprApiObjectActionTokens->attach)) {
+        if (curve->HasOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene)) {
             return;
         }
 
@@ -352,7 +345,7 @@ public:
         if (!RPR_ERROR_CHECK(rprSceneAttachCurve(m_scene->GetHandle(), curve->GetHandle()), "Failed to attach curve to scene")) {
             m_dirtyFlags |= ChangeTracker::DirtyScene;
 
-            curve->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* curve) {
+            curve->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* curve) {
                 if (!RPR_ERROR_CHECK(rprSceneDetachCurve(m_scene->GetHandle(), curve), "Failed to detach curve from scene")) {
                     m_dirtyFlags |= ChangeTracker::DirtyScene;
                 }
@@ -361,16 +354,8 @@ public:
     }
 
     void DetachCurveFromScene(RprApiObject* curve) {
-        if (!curve->HasOnReleaseAction(RprApiObjectActionTokens->attach)) {
-            return;
-        }
-
         RecursiveLockGuard rprLock(g_rprAccessMutex);
-        if (!RPR_ERROR_CHECK(rprSceneDetachCurve(m_scene->GetHandle(), curve->GetHandle()), "Failed to detach curve from scene")) {
-            m_dirtyFlags |= ChangeTracker::DirtyScene;
-
-            curve->DetachOnReleaseAction(RprApiObjectActionTokens->attach);
-        }
+        curve->DetachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene);
     }
 #endif
 
@@ -392,7 +377,7 @@ public:
         }
         m_dirtyFlags |= ChangeTracker::DirtyScene;
 
-        meshInstanceObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* instance) {
+        meshInstanceObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* instance) {
             if (!RPR_ERROR_CHECK(rprSceneDetachShape(m_scene->GetHandle(), instance), "Failed to detach mesh instance from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -405,7 +390,7 @@ public:
         if (m_rprContext->GetActivePluginType() == rpr::PluginType::HYBRID) {
             // XXX (Hybrid): rprShapeSetVisibility not supported, emulate visibility using attach/detach
             if (isVisible) {
-                if (mesh->HasOnReleaseAction(RprApiObjectActionTokens->attach)) {
+                if (mesh->HasOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene)) {
                     return;
                 }
 
@@ -413,23 +398,15 @@ public:
                 if (!RPR_ERROR_CHECK(rprSceneAttachShape(m_scene->GetHandle(), mesh->GetHandle()), "Failed to attach shape to scene")) {
                     m_dirtyFlags |= ChangeTracker::DirtyScene;
 
-                    mesh->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* mesh) {
+                    mesh->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* mesh) {
                         if (!RPR_ERROR_CHECK(rprSceneDetachShape(m_scene->GetHandle(), mesh), "Failed to detach mesh from scene")) {
                             m_dirtyFlags |= ChangeTracker::DirtyScene;
                         }
                     });
                 }
             } else {
-                if (!mesh->HasOnReleaseAction(RprApiObjectActionTokens->attach)) {
-                    return;
-                }
-
                 RecursiveLockGuard rprLock(g_rprAccessMutex);
-                if (!RPR_ERROR_CHECK(rprSceneDetachShape(m_scene->GetHandle(), mesh->GetHandle()), "Failed to detach mesh from scene")) {
-                    m_dirtyFlags |= ChangeTracker::DirtyScene;
-
-                    mesh->DetachOnReleaseAction(RprApiObjectActionTokens->attach);
-                }
+                mesh->DetachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene);
             }
         } else {
             RecursiveLockGuard rprLock(g_rprAccessMutex);
@@ -480,7 +457,7 @@ public:
         }
         m_dirtyFlags |= ChangeTracker::DirtyScene;
 
-        curveObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* curve) {
+        curveObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* curve) {
             if (!RPR_ERROR_CHECK(rprSceneDetachCurve(m_scene->GetHandle(), curve), "Failed to detach curve from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -506,7 +483,7 @@ public:
             return nullptr;
         }
         m_dirtyFlags |= ChangeTracker::DirtyScene;
-        lightObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* light) {
+        lightObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* light) {
             if (!RPR_ERROR_CHECK(rprSceneDetachLight(m_scene->GetHandle(), light), "Failed to detach directional light from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -536,14 +513,14 @@ public:
         if (RPR_ERROR_CHECK(rprEnvironmentLightSetIntensityScale(light, intensity), "Fail to set environment light intencity")) return nullptr;
         if (m_rprContext->GetActivePluginType() == rpr::PluginType::HYBRID) {
             if (RPR_ERROR_CHECK(rprSceneSetEnvironmentLight(m_scene->GetHandle(), light), "Fail to set environment light")) return nullptr;
-            lightObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* light) {
+            lightObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* light) {
                 if (!RPR_ERROR_CHECK(rprSceneSetEnvironmentLight(m_scene->GetHandle(), nullptr), "Fail to unset environment light")) {
                     m_dirtyFlags |= ChangeTracker::DirtyScene;
                 }
             });
         } else {
             if (RPR_ERROR_CHECK(rprSceneAttachLight(m_scene->GetHandle(), light), "Fail to attach environment light to scene")) return nullptr;
-            lightObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* light) {
+            lightObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* light) {
                 if (!RPR_ERROR_CHECK(rprSceneDetachLight(m_scene->GetHandle(), light), "Fail to detach environment light")) {
                     m_dirtyFlags |= ChangeTracker::DirtyScene;
                 }
@@ -563,7 +540,7 @@ public:
 
         RecursiveLockGuard rprLock(g_rprAccessMutex);
         try {
-            auto image = make_unique<rpr::Image>(m_rprContext->GetHandle(), path.c_str());
+            auto image = pxr::make_unique<rpr::Image>(m_rprContext->GetHandle(), path.c_str());
             return CreateEnvironmentLight(std::move(image), intensity);
         } catch (rpr::Error const& error) {
             TF_RUNTIME_ERROR("Failed to create environment light: %s", error.what());
@@ -583,7 +560,7 @@ public:
         std::vector<std::array<float, 3>> imageData(imageSize * imageSize, backgroundColor);
 
         try {
-            auto image = make_unique<rpr::Image>(m_rprContext->GetHandle(), imageSize, imageSize, format, imageData[0].data());
+            auto image = pxr::make_unique<rpr::Image>(m_rprContext->GetHandle(), imageSize, imageSize, format, imageData[0].data());
             return CreateEnvironmentLight(std::move(image), intensity);
         } catch (rpr::Error const& error) {
             TF_RUNTIME_ERROR("Failed to create environment light: %s", error.what());
@@ -777,19 +754,22 @@ public:
         }
     }
 
-    RprApiObjectPtr CreateMaterial(const MaterialAdapter& materialAdapter) {
-        if (!m_rprContext || !m_rprMaterialFactory) {
+    RprApiObjectPtr CreateMaterial(std::unique_ptr<MaterialAdapter>&& materialAdapter) {
+        if (!m_rprContext) {
             return nullptr;
         }
 
         RecursiveLockGuard rprLock(g_rprAccessMutex);
-        auto material = m_rprMaterialFactory->CreateMaterial(materialAdapter.GetType(), materialAdapter);
-        if (!material) {
-            return nullptr;
-        }
+        auto material = new HdRprApiMaterial(std::move(materialAdapter));
+        m_materialsToCommit.push_back(material);
 
-        return make_unique<RprApiObject>(material, [this](void* material) {
-            m_rprMaterialFactory->DeleteMaterial(static_cast<RprApiMaterial*>(material));
+        return pxr::make_unique<RprApiObject>(material, [this](void* materialPtr) {
+            auto material = static_cast<HdRprApiMaterial*>(materialPtr);
+            auto iter = std::find(m_materialsToCommit.begin(), m_materialsToCommit.end(), material);
+            if (iter != m_materialsToCommit.end()) {
+                m_materialsToCommit.erase(iter);
+            }
+            delete material;
         });
     }
 
@@ -845,7 +825,7 @@ public:
         if (RPR_ERROR_CHECK(rprSceneAttachHeteroVolume(m_scene->GetHandle(), heteroVolume), "Fail attach hetero volume to scene")) return nullptr;
         m_dirtyFlags |= ChangeTracker::DirtyScene;
 
-        heteroVolumeObject->AttachOnReleaseAction(RprApiObjectActionTokens->attach, [this](void* volume) {
+        heteroVolumeObject->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachFromScene, [this](void* volume) {
             if (!RPR_ERROR_CHECK(rprSceneDetachHeteroVolume(m_scene->GetHandle(), volume), "Failed to detach hetero volume from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
@@ -874,10 +854,10 @@ public:
             return nullptr;
         }
 
-        MaterialAdapter matAdapter(EMaterialType::TRANSPERENT,
-                                   MaterialParams{{HdPrimvarRoleTokens->color, VtValue(GfVec4f(1.0f, 1.0f, 1.0f, 1.0f))}});
+        auto matAdapter = pxr::make_unique<MaterialAdapter>(EMaterialType::TRANSPERENT,
+            MaterialParams{{HdPrimvarRoleTokens->color, VtValue(GfVec4f(1.0f, 1.0f, 1.0f, 1.0f))}});
 
-        auto transparentMaterial = CreateMaterial(matAdapter);
+        auto transparentMaterial = CreateMaterial(std::move(matAdapter));
         if (!transparentMaterial) {
             return nullptr;
         }
@@ -887,7 +867,7 @@ public:
         meshTransform.SetScale(volumeSize);
         meshTransform.SetTranslateOnly(GfCompMult(voxelSize, GfVec3f(gridSize)) / 2.0f + gridBBLow);
 
-        SetMeshMaterial(cubeMesh->GetHandle(), static_cast<RprApiMaterial*>(transparentMaterial->GetHandle()));
+        SetMeshMaterial(cubeMesh.get(), static_cast<HdRprApiMaterial*>(transparentMaterial->GetHandle()));
         SetMeshHeteroVolume(cubeMesh->GetHandle(), heteroVolume->GetHandle());
         SetMeshTransform(cubeMesh->GetHandle(), meshTransform);
         SetHeteroVolumeTransform(heteroVolume->GetHandle(), meshTransform);
@@ -978,7 +958,7 @@ public:
             if (aovName == HdRprAovTokens->depth) {
                 EnableAov(HdRprAovTokens->worldCoordinate, width, height);
             } else {
-                aovFrameBuffer.aov = make_unique<rpr::FrameBuffer>(m_rprContext->GetHandle(), width, height);
+                aovFrameBuffer.aov = pxr::make_unique<rpr::FrameBuffer>(m_rprContext->GetHandle(), width, height);
                 if (m_rprContext->GetActivePluginType() == rpr::PluginType::HYBRID && aovName == HdRprAovTokens->normal) {
                     // TODO: remove me when Hybrid gain RPR_AOV_GEOMETRIC_NORMAL support
                     aovFrameBuffer.aov->AttachAs(RPR_AOV_SHADING_NORMAL);
@@ -988,7 +968,7 @@ public:
 
                 // XXX: Hybrid plugin does not support framebuffer resolving (rprContextResolveFrameBuffer)
                 if (m_rprContext->GetActivePluginType() != rpr::PluginType::HYBRID) {
-                    aovFrameBuffer.resolved = make_unique<rpr::FrameBuffer>(m_rprContext->GetHandle(), width, height);
+                    aovFrameBuffer.resolved = pxr::make_unique<rpr::FrameBuffer>(m_rprContext->GetHandle(), width, height);
                 }
             }
 
@@ -1107,6 +1087,53 @@ public:
 
     void Update() {
         RecursiveLockGuard rprLock(g_rprAccessMutex);
+
+        if (!m_materialsToCommit.empty()) {
+            // We gather all texture that going to be used for all material we need to commit
+            // So that we can parallelize loading and decoding them
+            // After it we prefill imageCache so that material creation will get already cached images
+            std::set<std::string> uniquePaths;
+            for (auto material : m_materialsToCommit) {
+                auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
+                auto& matAdapter = initialMaterialState->GetMaterialAdapter();
+                for (auto& textureParam : matAdapter.GetTexRprParams()) {
+                    auto& texturePath = textureParam.second.path;
+                    if (uniquePaths.count(texturePath) == 0 &&
+                        !m_imageCache->IsCached(texturePath)) {
+                        uniquePaths.insert(texturePath);
+                    }
+                }
+            }
+
+            std::vector<std::pair<std::string, std::unique_ptr<HdRprCpuImage>>> loadedImages(uniquePaths.size());
+            std::atomic<int> numLoadedImages;
+            WorkParallelForEach(uniquePaths.begin(), uniquePaths.end(),
+                [&loadedImages, &numLoadedImages](std::string const& path) {
+                loadedImages[numLoadedImages++] = {path, LoadImage(path)};
+            });
+
+            std::vector<std::shared_ptr<rpr::Image>> precachedImages;
+            for (auto& imageEntry : loadedImages) {
+                auto cpuImage = imageEntry.second.get();
+                if (!cpuImage) {
+                    continue;
+                }
+
+                try {
+                    auto rprImage = std::make_shared<rpr::Image>(m_rprContext->GetHandle(), cpuImage->desc, cpuImage->format, cpuImage->data.get());
+                    precachedImages.push_back(rprImage);
+                    m_imageCache->InsertImage(imageEntry.first, rprImage);
+                } catch (rpr::Error const& e) {
+                    TF_RUNTIME_ERROR("Failed to create rpr::Image for \"%s\": %s", imageEntry.first.c_str(), e.what());
+                }
+            }
+
+            for (auto material : m_materialsToCommit) {
+                auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
+                material->m_state = HdRprApiMaterial::CompiledState::Create(initialMaterialState, m_matsys->GetHandle(), m_imageCache.get());
+            }
+            m_materialsToCommit.clear();
+        }
 
         m_imageCache->GarbageCollectIfNeeded();
 
@@ -1614,7 +1641,6 @@ private:
         rpr_material_system matsys;
         if (RPR_ERROR_CHECK(rprContextCreateMaterialSystem(m_rprContext->GetHandle(), 0, &matsys), "Fail create Material System resolve")) return;
         m_matsys = RprApiObject::Wrap(matsys);
-        m_rprMaterialFactory.reset(new RprMaterialFactory(matsys, m_imageCache.get()));
     }
 
     void SplitPolygons(const VtIntArray& indexes, const VtIntArray& vpf, VtIntArray& out_newIndexes, VtIntArray& out_newVpf) {
@@ -1973,8 +1999,9 @@ private:
     std::unique_ptr<ImageCache> m_imageCache;
     RprApiObjectPtr m_scene;
     RprApiObjectPtr m_camera;
+
     RprApiObjectPtr m_matsys;
-    std::unique_ptr<RprMaterialFactory> m_rprMaterialFactory;
+    std::vector<HdRprApiMaterial*> m_materialsToCommit;
 
     struct AovFrameBuffer {
         std::unique_ptr<rpr::FrameBuffer> aov;
@@ -2012,7 +2039,7 @@ private:
 };
 
 std::unique_ptr<RprApiObject> RprApiObject::Wrap(void* handle) {
-    return make_unique<RprApiObject>(handle);
+    return pxr::make_unique<RprApiObject>(handle);
 }
 
 void DefaultRprApiObjectDeleter(void* handle) {
@@ -2052,12 +2079,18 @@ void RprApiObject::AttachDependency(RprApiObjectPtr&& dependencyObject) {
 }
 
 void RprApiObject::AttachOnReleaseAction(TfToken const& actionName, std::function<void(void*)> action) {
-    TF_VERIFY(m_onReleaseActions.count(actionName) == 0);
+    DetachOnReleaseAction(actionName);
     m_onReleaseActions.emplace(actionName, std::move(action));
 }
 
-void RprApiObject::DetachOnReleaseAction(TfToken const& actionName) {
-    m_onReleaseActions.erase(actionName);
+void RprApiObject::DetachOnReleaseAction(TfToken const& actionName, bool apply) {
+    auto actionIter = m_onReleaseActions.find(actionName);
+    if (actionIter != m_onReleaseActions.end()) {
+        if (apply) {
+            actionIter->second(m_handle);
+        }
+        m_onReleaseActions.erase(actionIter);
+    }
 }
 
 bool RprApiObject::HasOnReleaseAction(TfToken const& actionName) {
@@ -2147,9 +2180,9 @@ RprApiObjectPtr HdRprApi::CreateVolume(
         gridSize, voxelSize, gridBBLow);
 }
 
-RprApiObjectPtr HdRprApi::CreateMaterial(MaterialAdapter& materialAdapter) {
+RprApiObjectPtr HdRprApi::CreateMaterial(std::unique_ptr<MaterialAdapter>&& materialAdapter) {
     m_impl->InitIfNeeded();
-    return m_impl->CreateMaterial(materialAdapter);
+    return m_impl->CreateMaterial(std::move(materialAdapter));
 }
 
 void HdRprApi::SetMeshTransform(RprApiObject* mesh, const GfMatrix4f& transform) {
@@ -2164,18 +2197,18 @@ void HdRprApi::SetMeshVertexInterpolationRule(RprApiObject* mesh, TfToken bounda
     m_impl->SetMeshVertexInterpolationRule(mesh->GetHandle(), boundaryInterpolation);
 }
 
-void HdRprApi::SetMeshMaterial(RprApiObject* mesh, RprApiObject const* material) {
-    auto materialHandle = material ? static_cast<RprApiMaterial*>(material->GetHandle()) : nullptr;
-    m_impl->SetMeshMaterial(mesh->GetHandle(), materialHandle);
+void HdRprApi::SetMeshMaterial(RprApiObject* mesh, RprApiObject* material) {
+    auto materialHandle = material ? static_cast<HdRprApiMaterial*>(material->GetHandle()) : nullptr;
+    m_impl->SetMeshMaterial(mesh, materialHandle);
 }
 
 void HdRprApi::SetMeshVisibility(RprApiObject* mesh, bool isVisible) {
     m_impl->SetMeshVisibility(mesh, isVisible);
 }
 
-void HdRprApi::SetCurveMaterial(RprApiObject* curve, RprApiObject const* material) {
-    auto materialHandle = material ? static_cast<RprApiMaterial*>(material->GetHandle()) : nullptr;
-    m_impl->SetCurveMaterial(curve->GetHandle(), materialHandle);
+void HdRprApi::SetCurveMaterial(RprApiObject* curve, RprApiObject* material) {
+    auto materialHandle = material ? static_cast<HdRprApiMaterial*>(material->GetHandle()) : nullptr;
+    m_impl->SetCurveMaterial(curve, materialHandle);
 }
 
 void HdRprApi::SetCurveTransform(RprApiObject* curve, GfMatrix4f const& transform) {

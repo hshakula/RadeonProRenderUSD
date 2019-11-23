@@ -1,10 +1,13 @@
-﻿#include "materialFactory.h"
+#include "rprApiMaterial.h"
+#include "materialAdapter.h"
+#include "imageCache.h"
+#include "rprApi.h"
 #include "rprcpp/rprImage.h"
 #include "pxr/usd/ar/resolver.h"
 
-PXR_NAMESPACE_OPEN_SCOPE
+#include <vector>
 
-#define SAFE_DELETE_RPR_OBJECT(x) if(x) {rprObjectDelete( x ); x = nullptr;}
+PXR_NAMESPACE_OPEN_SCOPE
 
 namespace {
 
@@ -50,17 +53,41 @@ bool GetSelectedChannel(const EColorChannel& colorChannel, rpr_int& out_selected
 
 } // namespace anonymous
 
-RprMaterialFactory::RprMaterialFactory(rpr_material_system matSys,
-                                       ImageCache* imageCache)
-    : m_matSys(matSys),
-    m_imageCache(imageCache) {
+HdRprApiMaterial::InitialState::InitialState(std::unique_ptr<MaterialAdapter>&& adapter)
+    : m_adapter(std::move(adapter)) {
 
 }
 
-RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const MaterialAdapter& materialAdapter) {
+HdRprApiMaterial::InitialState::~InitialState() {
+    for (auto shape : m_attachedShapes) {
+        shape->DetachOnReleaseAction(HdRprApiObjectActionTokens->detachMaterial, false);
+    }
+}
+
+void HdRprApiMaterial::InitialState::AttachToShape(RprApiObject* shape) {
+    m_attachedShapes.push_back(shape);
+    shape->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachMaterial, [this, shape](void*) {
+        auto shapeIter = std::find(m_attachedShapes.begin(), m_attachedShapes.end(), shape);
+        if (TF_VERIFY(shapeIter != m_attachedShapes.end())) {
+            m_attachedShapes.erase(shapeIter);
+        }
+    });
+}
+
+void HdRprApiMaterial::InitialState::AttachToCurve(RprApiObject* shape) {
+    // no - op
+}
+
+std::unique_ptr<HdRprApiMaterial::CompiledState>
+HdRprApiMaterial::CompiledState::Create(
+    InitialState const* initialState,
+    rpr_material_system matSys,
+    ImageCache* imageCache) {
+    auto& materialAdapter = initialState->GetMaterialAdapter();
+
     rpr_material_node_type materialType = 0;
 
-    switch (type) {
+    switch (materialAdapter.GetType()) {
         case EMaterialType::EMISSIVE:
             materialType = RPR_MATERIAL_NODE_EMISSIVE;
             break;
@@ -76,7 +103,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
     }
 
     rpr_material_node rootMaterialNode = nullptr;
-    auto status = rprMaterialSystemCreateNode(m_matSys, materialType, &rootMaterialNode);
+    auto status = rprMaterialSystemCreateNode(matSys, materialType, &rootMaterialNode);
     if (!rootMaterialNode) {
         if (status != RPR_ERROR_UNSUPPORTED) {
             RPR_ERROR_CHECK(status, "Failed to create material node");
@@ -84,8 +111,8 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
         return nullptr;
     }
 
-    auto material = new RprApiMaterial;
-    material->rootMaterial = rootMaterialNode;
+    auto material = std::unique_ptr<CompiledState>(new CompiledState());
+    material->m_rootMaterial = rootMaterialNode;
 
     for (auto const& param : materialAdapter.GetVec4fRprParams()) {
         const uint32_t& paramId = param.first;
@@ -94,14 +121,14 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
         if (materialAdapter.GetTexRprParams().count(paramId)) {
             continue;
         }
-        rprMaterialNodeSetInputFByKey(material->rootMaterial, paramId, paramValue[0], paramValue[1], paramValue[2], paramValue[3]);
+        rprMaterialNodeSetInputFByKey(rootMaterialNode, paramId, paramValue[0], paramValue[1], paramValue[2], paramValue[3]);
     }
 
     for (auto param : materialAdapter.GetURprParams()) {
         const uint32_t& paramId = param.first;
         const uint32_t& paramValue = param.second;
 
-        rprMaterialNodeSetInputUByKey(material->rootMaterial, paramId, paramValue);
+        rprMaterialNodeSetInputUByKey(rootMaterialNode, paramId, paramValue);
     }
 
     auto getTextureMaterialNode = [&material](ImageCache* imageCache, rpr_material_system matSys, MaterialTexture const& matTex) -> rpr_material_node {
@@ -116,7 +143,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
             return nullptr;
         }
         auto rprImage = image->GetHandle();
-        material->materialImages.push_back(std::move(image));
+        material->m_materialImages.push_back(std::move(image));
 
         rpr_image_wrap_type rprWrapSType;
         rpr_image_wrap_type rprWrapTType;
@@ -134,7 +161,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
         }
 
         rprMaterialNodeSetInputImageDataByKey(materialNode, RPR_MATERIAL_INPUT_DATA, rprImage);
-        material->materialNodes.push_back(materialNode);
+        material->m_materialNodes.push_back(materialNode);
 
         if (matTex.isScaleEnabled || matTex.isBiasEnabled) {
             rpr_material_node uv_node = nullptr;
@@ -149,7 +176,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
                     const GfVec4f& scale = matTex.scale;
                     status = rprMaterialSystemCreateNode(matSys, RPR_MATERIAL_NODE_ARITHMETIC, &uv_scaled_node);
                     if (uv_scaled_node) {
-                        material->materialNodes.push_back(uv_scaled_node);
+                        material->m_materialNodes.push_back(uv_scaled_node);
 
                         status = rprMaterialNodeSetInputUByKey(uv_scaled_node, RPR_MATERIAL_INPUT_OP, RPR_MATERIAL_NODE_OP_MUL);
                         status = rprMaterialNodeSetInputNByKey(uv_scaled_node, RPR_MATERIAL_INPUT_COLOR0, uv_node);
@@ -163,7 +190,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
 
                     status = rprMaterialSystemCreateNode(matSys, RPR_MATERIAL_NODE_ARITHMETIC, &uv_bias_node);
                     if (uv_bias_node) {
-                        material->materialNodes.push_back(uv_bias_node);
+                        material->m_materialNodes.push_back(uv_bias_node);
 
                         status = rprMaterialNodeSetInputUByKey(uv_bias_node, RPR_MATERIAL_INPUT_OP, RPR_MATERIAL_NODE_OP_ADD);
                         status = rprMaterialNodeSetInputNByKey(uv_bias_node, RPR_MATERIAL_INPUT_COLOR0, color0Input);
@@ -176,7 +203,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
                 } else {
                     rpr_material_node uvIn = uv_bias_node ? uv_bias_node : uv_scaled_node;
                     rprMaterialNodeSetInputNByKey(materialNode, RPR_MATERIAL_INPUT_UV, uvIn);
-                    material->materialNodes.push_back(uv_node);
+                    material->m_materialNodes.push_back(uv_node);
                 }
             }
         }
@@ -188,7 +215,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
                 status = rprMaterialNodeSetInputFByKey(arithmetic, RPR_MATERIAL_INPUT_COLOR0, 1.0, 1.0, 1.0, 1.0);
                 status = rprMaterialNodeSetInputNByKey(arithmetic, RPR_MATERIAL_INPUT_COLOR1, materialNode);
                 status = rprMaterialNodeSetInputUByKey(arithmetic, RPR_MATERIAL_INPUT_OP, RPR_MATERIAL_NODE_OP_SUB);
-                material->materialNodes.push_back(arithmetic);
+                material->m_materialNodes.push_back(arithmetic);
 
                 materialNode = arithmetic;
             }
@@ -205,7 +232,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
                     status = rprMaterialNodeSetInputNByKey(arithmetic, RPR_MATERIAL_INPUT_COLOR0, materialNode);
                     status = rprMaterialNodeSetInputFByKey(arithmetic, RPR_MATERIAL_INPUT_COLOR1, 0.0, 0.0, 0.0, 0.0);
                     status = rprMaterialNodeSetInputUByKey(arithmetic, RPR_MATERIAL_INPUT_OP, selectedChannel);
-                    material->materialNodes.push_back(arithmetic);
+                    material->m_materialNodes.push_back(arithmetic);
 
                     outTexture = arithmetic;
                 }
@@ -225,7 +252,7 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
         const uint32_t& paramId = texParam.first;
         const MaterialTexture& matTex = texParam.second;
 
-        rpr_material_node outNode = getTextureMaterialNode(m_imageCache, m_matSys, matTex);
+        rpr_material_node outNode = getTextureMaterialNode(imageCache, matSys, matTex);
         if (!outNode) {
             continue;
         }
@@ -240,81 +267,116 @@ RprApiMaterial* RprMaterialFactory::CreateMaterial(EMaterialType type, const Mat
         if ((paramId == RPR_UBER_MATERIAL_INPUT_DIFFUSE_COLOR ||
              paramId == RPR_UBER_MATERIAL_INPUT_REFLECTION_COLOR) &&
             ArGetResolver().GetExtension(matTex.path) == "png") {
-            rprImageSetGamma(material->materialImages.back()->GetHandle(), 2.2f);
+            rprImageSetGamma(material->m_materialImages.back()->GetHandle(), 2.2f);
         }
 
         // normal map textures need to be passed through the normal map node
         if (paramId == RPR_UBER_MATERIAL_INPUT_DIFFUSE_NORMAL ||
             paramId == RPR_UBER_MATERIAL_INPUT_REFLECTION_NORMAL) {
             rpr_material_node textureNode = outNode;
-            int status = rprMaterialSystemCreateNode(m_matSys, RPR_MATERIAL_NODE_NORMAL_MAP, &outNode);
+            int status = rprMaterialSystemCreateNode(matSys, RPR_MATERIAL_NODE_NORMAL_MAP, &outNode);
             if (status == RPR_SUCCESS) {
-                material->materialNodes.push_back(outNode);
+                material->m_materialNodes.push_back(outNode);
                 status = rprMaterialNodeSetInputNByKey(outNode, RPR_MATERIAL_INPUT_COLOR, textureNode);
             }
         }
 
-        rprMaterialNodeSetInputNByKey(material->rootMaterial, paramId, outNode);
+        rprMaterialNodeSetInputNByKey(rootMaterialNode, paramId, outNode);
     }
 
     if (emissionColorNode) {
         rpr_material_node averageNode = nullptr;
-        rprMaterialSystemCreateNode(m_matSys, RPR_MATERIAL_NODE_ARITHMETIC, &averageNode);
+        rprMaterialSystemCreateNode(matSys, RPR_MATERIAL_NODE_ARITHMETIC, &averageNode);
         if (averageNode) {
             rprMaterialNodeSetInputUByKey(averageNode, RPR_MATERIAL_INPUT_OP, RPR_MATERIAL_NODE_OP_AVERAGE_XYZ);
             rprMaterialNodeSetInputNByKey(averageNode, RPR_MATERIAL_INPUT_COLOR0, emissionColorNode);
 
             rpr_material_node isBlackColorNode = nullptr;
-            rprMaterialSystemCreateNode(m_matSys, RPR_MATERIAL_NODE_ARITHMETIC, &isBlackColorNode);
+            rprMaterialSystemCreateNode(matSys, RPR_MATERIAL_NODE_ARITHMETIC, &isBlackColorNode);
             if (isBlackColorNode) {
-                material->materialNodes.push_back(averageNode);
-                material->materialNodes.push_back(isBlackColorNode);
+                material->m_materialNodes.push_back(averageNode);
+                material->m_materialNodes.push_back(isBlackColorNode);
                 rprMaterialNodeSetInputUByKey(isBlackColorNode, RPR_MATERIAL_INPUT_OP, RPR_MATERIAL_NODE_OP_GREATER);
                 rprMaterialNodeSetInputNByKey(isBlackColorNode, RPR_MATERIAL_INPUT_COLOR0, averageNode);
                 rprMaterialNodeSetInputFByKey(isBlackColorNode, RPR_MATERIAL_INPUT_COLOR1, 0.0f, 0.0f, 0.0f, 0.0f);
 
-                rprMaterialNodeSetInputNByKey(material->rootMaterial, RPR_UBER_MATERIAL_INPUT_EMISSION_WEIGHT, isBlackColorNode);
+                rprMaterialNodeSetInputNByKey(rootMaterialNode, RPR_UBER_MATERIAL_INPUT_EMISSION_WEIGHT, isBlackColorNode);
             } else {
                 rprObjectDelete(averageNode);
             }
         }
     }
 
-    material->displacementMaterial = getTextureMaterialNode(m_imageCache, m_matSys, materialAdapter.GetDisplacementTexture());
+    material->m_displacementMaterial = getTextureMaterialNode(imageCache, matSys, materialAdapter.GetDisplacementTexture());
+
+    for (auto attachedShape : initialState->GetAttachedShapes()) {
+        material->AttachToShape(attachedShape);
+    }
+    for (auto attachedCurve : initialState->GetAttachedCurves()) {
+        material->AttachToCurve(attachedCurve);
+    }
 
     return material;
 }
 
-void RprMaterialFactory::DeleteMaterial(RprApiMaterial* material) {
-    if (!material) {
-        return;
-    }
-
-    if (!material->materialImages.empty()) {
+HdRprApiMaterial::CompiledState::~CompiledState() {
+    if (!m_materialImages.empty()) {
         m_imageCache->RequireGarbageCollection();
     }
 
-    SAFE_DELETE_RPR_OBJECT(material->rootMaterial);
-    SAFE_DELETE_RPR_OBJECT(material->displacementMaterial);
-    for (auto node : material->materialNodes) {
-        SAFE_DELETE_RPR_OBJECT(node);
+    for (auto shape : m_attachedShapes) {
+        shape->DetachOnReleaseAction(HdRprApiObjectActionTokens->detachMaterial, false);
+        rprShapeSetMaterial(shape->GetHandle(), nullptr);
+        rprShapeSetDisplacementMaterial(shape->GetHandle(), nullptr);
     }
-    delete material;
+    if (m_rootMaterial) {
+        rprObjectDelete(m_rootMaterial);
+    }
+    if (m_displacementMaterial) {
+        rprObjectDelete(m_displacementMaterial);
+    }
+    for (auto node : m_materialNodes) {
+        rprObjectDelete(node);
+    }
 }
 
-void RprMaterialFactory::AttachMaterialToShape(rpr_shape mesh, const RprApiMaterial* material) {
-    if (material) {
-        rprShapeSetMaterial(mesh, material->rootMaterial);
-        if (material->displacementMaterial) {
-            rprShapeSetDisplacementMaterial(mesh, material->displacementMaterial);
+void HdRprApiMaterial::CompiledState::AttachToShape(RprApiObject* shape) {
+    shape->DetachOnReleaseAction(HdRprApiObjectActionTokens->detachMaterial);
+
+    m_attachedShapes.push_back(shape);
+    RPR_ERROR_CHECK(rprShapeSetMaterial(shape->GetHandle(), m_rootMaterial), "Failed to set shape material");
+    if (m_displacementMaterial) {
+        RPR_ERROR_CHECK(rprShapeSetDisplacementMaterial(shape->GetHandle(), m_displacementMaterial), "Failed to set shape material");
+    }
+    shape->AttachOnReleaseAction(HdRprApiObjectActionTokens->detachMaterial, [this, shape](void* meshHandle) {
+        rprShapeSetMaterial(meshHandle, nullptr);
+        rprShapeSetDisplacementMaterial(meshHandle, nullptr);
+        auto shapeIter = std::find(m_attachedShapes.begin(), m_attachedShapes.end(), shape);
+        if (TF_VERIFY(shapeIter != m_attachedShapes.end())) {
+            m_attachedShapes.erase(shapeIter);
         }
-    } else {
-        rprShapeSetMaterial(mesh, nullptr);
+    });
+}
+
+void HdRprApiMaterial::CompiledState::AttachToCurve(RprApiObject* shape) {
+    // no - op
+}
+
+HdRprApiMaterial::HdRprApiMaterial(std::unique_ptr<MaterialAdapter>&& adapter)
+    : m_state(std::unique_ptr<InitialState>(new InitialState(std::move(adapter)))) {
+
+}
+
+void HdRprApiMaterial::AttachToShape(RprApiObject* shape) {
+    if (m_state) {
+        m_state->AttachToShape(shape);
     }
 }
 
-void RprMaterialFactory::AttachMaterialToCurve(rpr_shape curve, const RprApiMaterial* material) {
-    rprCurveSetMaterial(curve, material ? material->rootMaterial : nullptr);
+void HdRprApiMaterial::AttachToCurve(RprApiObject* shape) {
+    if (m_state) {
+        m_state->AttachToCurve(shape);
+    }
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

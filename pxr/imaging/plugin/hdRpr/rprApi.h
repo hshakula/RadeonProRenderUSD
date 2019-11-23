@@ -23,7 +23,6 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 class HdRprApiImpl;
 class MaterialAdapter;
-struct RprApiMaterial;
 
 class RprApiObject {
 public:
@@ -40,7 +39,7 @@ public:
     void AttachDependency(std::unique_ptr<rpr::Object>&& dependencyObject);
 
     void AttachOnReleaseAction(TfToken const& actionName, std::function<void (void*)> action);
-    void DetachOnReleaseAction(TfToken const& actionName);
+    void DetachOnReleaseAction(TfToken const& actionName, bool apply = true);
     bool HasOnReleaseAction(TfToken const& actionName);
 
     void* GetHandle() const;
@@ -66,7 +65,13 @@ using RprApiObjectPtr = std::unique_ptr<RprApiObject>;
     (worldCoordinate) \
     ((primvarsSt, "primvars:st"))
 
+#define HD_RPR_API_OBJECT_ACTION_TOKENS \
+    (detachFromScene) \
+    (detachMaterial) \
+    (unsetScene)
+
 TF_DECLARE_PUBLIC_TOKENS(HdRprAovTokens, HDRPR_API, HD_RPR_AOV_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdRprApiObjectActionTokens, HD_RPR_API_OBJECT_ACTION_TOKENS);
 
 class HdRprApi final {
 public:
@@ -94,15 +99,15 @@ public:
     void SetMeshTransform(RprApiObject* mesh, const GfMatrix4f& transform);
     void SetMeshRefineLevel(RprApiObject* mesh, int level);
     void SetMeshVertexInterpolationRule(RprApiObject* mesh, TfToken boundaryInterpolation);
-    void SetMeshMaterial(RprApiObject* mesh, RprApiObject const* material);
+    void SetMeshMaterial(RprApiObject* mesh, RprApiObject* material);
     void SetMeshVisibility(RprApiObject* mesh, bool isVisible);
 
     RprApiObjectPtr CreateCurve(const VtVec3fArray& points, const VtIntArray& indexes, float width);
-    void SetCurveMaterial(RprApiObject* curve, RprApiObject const* material);
+    void SetCurveMaterial(RprApiObject* curve, RprApiObject* material);
     void SetCurveVisibility(RprApiObject* curve, bool isVisible);
     void SetCurveTransform(RprApiObject* curve, GfMatrix4f const& transform);
 
-    RprApiObjectPtr CreateMaterial(MaterialAdapter& materialAdapter);
+    RprApiObjectPtr CreateMaterial(std::unique_ptr<MaterialAdapter>&& materialAdapter);
 
     const GfMatrix4d& GetCameraViewMatrix() const;
     const GfMatrix4d& GetCameraProjectionMatrix() const;
@@ -132,6 +137,11 @@ public:
 private:
     HdRprApiImpl* m_impl = nullptr;
 };
+
+template <typename T, typename... Args>
+std::unique_ptr<T> make_unique(Args&&... args) {
+    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+}
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

@@ -19,19 +19,21 @@ class ImageCache {
 public:
     ImageCache(rpr::Context* context);
 
+    void InsertImage(std::string const& path, std::shared_ptr<rpr::Image> const& image);
     std::shared_ptr<rpr::Image> GetImage(std::string const& path);
+
+    bool IsCached(std::string const& path) const;
 
     void RequireGarbageCollection();
     void GarbageCollectIfNeeded();
 
 private:
-    std::shared_ptr<rpr::Image> CreateImage(std::string const& path);
-
     class ImageMetadata {
     public:
+        ImageMetadata() = default;
         ImageMetadata(std::string const& path);
 
-        bool IsMetadataEqual(ImageMetadata const& md);
+        bool IsMetadataEqual(ImageMetadata const& md) const;
 
     public:
         std::weak_ptr<rpr::Image> handle;

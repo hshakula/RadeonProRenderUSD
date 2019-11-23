@@ -25,7 +25,7 @@ public:
 
     /// Get pointer to RPR material
     /// In case material сreation failure return nullptr
-    const RprApiObject* GetRprMaterialObject() const;
+    RprApiObject* GetRprMaterialObject() const;
 
 private:
     RprApiObjectPtr m_rprMaterial;

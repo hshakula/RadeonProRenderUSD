@@ -1,7 +1,7 @@
 #include "lightBase.h"
 #include "renderParam.h"
 #include "material.h"
-#include "materialFactory.h"
+#include "materialAdapter.h"
 #include "rprApi.h"
 
 #include "pxr/imaging/hd/sceneDelegate.h"
@@ -70,8 +70,8 @@ void HdRprLightBase::Sync(HdSceneDelegate* sceneDelegate,
         const GfVec3f emissionColor = (isNormalize) ? NormalizeLightColor(m_transform, illumColor) : illumColor;
 
         if (!m_lightMaterial || IsDirtyMaterial(emissionColor)) {
-            MaterialAdapter matAdapter(EMaterialType::EMISSIVE, MaterialParams{{HdLightTokens->color, VtValue(emissionColor)}});
-            m_lightMaterial = rprApi->CreateMaterial(matAdapter);
+            auto matAdapter = pxr::make_unique<MaterialAdapter>(EMaterialType::EMISSIVE, MaterialParams{{HdLightTokens->color, VtValue(emissionColor)}});
+            m_lightMaterial = rprApi->CreateMaterial(std::move(matAdapter));
         }
 
         if (!m_lightMaterial) {

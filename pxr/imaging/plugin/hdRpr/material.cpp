@@ -1,5 +1,4 @@
 #include "material.h"
-#include "materialFactory.h"
 #include "materialAdapter.h"
 
 #include "renderParam.h"
@@ -50,8 +49,7 @@ void HdRprMaterial::Sync(HdSceneDelegate* sceneDelegate,
             HdMaterialNetwork surface;
 
             if (GetMaterial(networkMap, materialType, surface)) {
-                MaterialAdapter matAdapter = MaterialAdapter(materialType, surface);
-                m_rprMaterial = rprApi->CreateMaterial(matAdapter);
+                m_rprMaterial = rprApi->CreateMaterial(make_unique<MaterialAdapter>(materialType, surface));
             } else {
                 TF_CODING_WARNING("Material type not supported");
             }
@@ -76,7 +74,7 @@ void HdRprMaterial::Finalize(HdRenderParam* renderParam) {
     HdMaterial::Finalize(renderParam);
 }
 
-RprApiObject const* HdRprMaterial::GetRprMaterialObject() const {
+RprApiObject* HdRprMaterial::GetRprMaterialObject() const {
     return m_rprMaterial.get();
 }
 

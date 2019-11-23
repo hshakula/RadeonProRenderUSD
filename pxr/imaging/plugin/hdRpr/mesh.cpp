@@ -2,7 +2,7 @@
 #include "instancer.h"
 #include "renderParam.h"
 #include "material.h"
-#include "materialFactory.h"
+#include "materialAdapter.h"
 #include "rprApi.h"
 
 #include "pxr/imaging/pxOsd/tokens.h"
@@ -237,8 +237,8 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
                     if (val.IsHolding<VtVec3fArray>()) {
                         color = val.UncheckedGet<VtVec3fArray>()[0];
                     }
-                    auto matAdapter = MaterialAdapter(EMaterialType::COLOR, MaterialParams{{HdRprMaterialTokens->color, VtValue(color)}});
-                    m_fallbackMaterial = rprApi->CreateMaterial(matAdapter);
+                    auto matAdapter = pxr::make_unique<MaterialAdapter>(EMaterialType::COLOR, MaterialParams{{HdRprMaterialTokens->color, VtValue(color)}});
+                    m_fallbackMaterial = rprApi->CreateMaterial(std::move(matAdapter));
                     break;
                 }
             }
@@ -405,7 +405,7 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         if (!newMesh && (*dirtyBits & HdChangeTracker::DirtyMaterialId)) {
             // when geometry subsetting enabled, the material comes from each particular HdGeomSubset
             if (m_topology.GetGeomSubsets().empty()) {
-                RprApiObject const* rprMaterial = nullptr;
+                RprApiObject* rprMaterial = nullptr;
                 auto hdMaterial = sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, m_cachedMaterialId);
                 if (hdMaterial) {
                     rprMaterial = static_cast<HdRprMaterial const*>(hdMaterial)->GetRprMaterialObject();

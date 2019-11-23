@@ -121,10 +121,10 @@ pxr_plugin(hdRpr
         renderPass
         renderThread
         rprApi
+        rprApiMaterial
         mesh
         instancer
         material
-        materialFactory
         materialAdapter
         lightBase
         domeLight
@@ -136,13 +136,13 @@ pxr_plugin(hdRpr
         renderBuffer
         basisCurves
         imageCache
+        imageLoader
         
         ${OptClass}
 
     PRIVATE_HEADERS
         boostIncludePath.h
         api.h
-        materialFactory.h
 
     RESOURCE_FILES
         plugInfo.json

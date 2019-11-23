@@ -1,9 +1,7 @@
 #include "imageCache.h"
-#include "rprcpp/rprContext.h"
-#include "pxr/imaging/glf/glew.h"
-#include "pxr/imaging/glf/uvTextureData.h"
-#include "pxr/imaging/glf/image.h"
+#include "imageLoader.h"
 #include "pxr/base/arch/fileSystem.h"
+#include "pxr/base/tf/diagnostic.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -22,62 +20,36 @@ std::shared_ptr<rpr::Image> ImageCache::GetImage(std::string const& path) {
         }
     }
 
-    auto image = CreateImage(path);
+    auto cpuImage = LoadImage(path);
+    if (!cpuImage) {
+        return nullptr;
+    }
+
+    auto image = std::make_shared<rpr::Image>(m_context, cpuImage->desc, cpuImage->format, cpuImage->data.get());
     if (image) {
         md.handle = image;
-        m_cache.emplace(path, md);
+        m_cache[path] = md;
     }
     return image;
 }
 
-std::shared_ptr<rpr::Image> ImageCache::CreateImage(std::string const& path) {
-    try {
-        if (!GlfImage::IsSupportedImageFile(path)) {
-            return std::make_shared<rpr::Image>(m_context->GetHandle(), path.c_str());
-        }
+void ImageCache::InsertImage(std::string const& path, std::shared_ptr<rpr::Image> const& image) {
+    if (TF_VERIFY(image)) {
+        ImageMetadata md(path);
+        md.handle = image;
+        m_cache[path] = md;
+    }
+}
 
-        auto textureData = GlfUVTextureData::New(path, INT_MAX, 0, 0, 0, 0);
-        if (textureData && textureData->Read(0, false)) {
-            rpr_image_format format = {};
-            switch (textureData->GLType()) {
-                case GL_UNSIGNED_BYTE:
-                    format.type = RPR_COMPONENT_TYPE_UINT8;
-                    break;
-                case GL_HALF_FLOAT:
-                    format.type = RPR_COMPONENT_TYPE_FLOAT16;
-                    break;
-                case GL_FLOAT:
-                    format.type = RPR_COMPONENT_TYPE_FLOAT32;
-                    break;
-                default:
-                    TF_CODING_ERROR("Failed to create image %s. Unsupported pixel data GLtype: %#x", path.c_str(), textureData->GLType());
-                    return nullptr;
-            }
+bool ImageCache::IsCached(std::string const& path) const {
+    ImageMetadata md(path);
 
-            switch (textureData->GLFormat()) {
-                case GL_RED:
-                    format.num_components = 1;
-                    break;
-                case GL_RGB:
-                    format.num_components = 3;
-                    break;
-                case GL_RGBA:
-                    format.num_components = 4;
-                    break;
-                default:
-                    TF_CODING_ERROR("Failed to create image %s. Unsupported pixel data GLformat: %#x", path.c_str(), textureData->GLFormat());
-                    return nullptr;
-            }
-
-            return std::make_shared<rpr::Image>(m_context->GetHandle(), textureData->ResizedWidth(), textureData->ResizedHeight(), format, textureData->GetRawBuffer());
-        } else {
-            TF_RUNTIME_ERROR("Failed to load image %s: unsupported format", path.c_str());
-        }
-    } catch (rpr::Error const& error) {
-        TF_RUNTIME_ERROR("Failed to read image %s: %s", path.c_str(), error.what());
+    auto it = m_cache.find(path);
+    if (it != m_cache.end() && it->second.IsMetadataEqual(md)) {
+        return it->second.handle.lock() != nullptr;
     }
 
-    return nullptr;
+    return false;
 }
 
 void ImageCache::RequireGarbageCollection() {
@@ -116,7 +88,7 @@ ImageCache::ImageMetadata::ImageMetadata(std::string const& path) {
     m_size = static_cast<size_t>(size);
 }
 
-bool ImageCache::ImageMetadata::IsMetadataEqual(ImageMetadata const& md) {
+bool ImageCache::ImageMetadata::IsMetadataEqual(ImageMetadata const& md) const {
     return m_modificationTime == md.m_modificationTime &&
         m_size == md.m_size;
 }

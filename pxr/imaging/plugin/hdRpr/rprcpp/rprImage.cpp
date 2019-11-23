@@ -1,15 +1,6 @@
 #include "rprImage.h"
 #include "rprContext.h"
 
-#ifdef ENABLE_RAT
-#include <IMG/IMG_File.h>
-#include <PXL/PXL_Raster.h>
-#endif
-
-#include <cstring>
-#include <vector>
-#include <array>
-
 PXR_NAMESPACE_OPEN_SCOPE
 
 namespace rpr {
@@ -37,79 +28,6 @@ rpr_image_desc GetRprImageDesc(rpr_image_format format, rpr_uint width, rpr_uint
 } // namespace anonymous
 
 Image::Image(rpr_context context, const char* path) {
-#ifdef ENABLE_RAT
-    auto dot = strrchr(path, '.');
-    if (dot && strcmp(dot, ".rat") == 0) {
-        auto ratImage = std::unique_ptr<IMG_File>(IMG_File::open(path));
-        if (!ratImage) {
-            throw rpr::Error((std::string("Failed to load image: ") + path).c_str());
-        }
-
-        UT_Array<PXL_Raster*> images;
-        std::shared_ptr<void> deferImagesRelease(nullptr, [&images](...) {
-            for (auto image : images) {
-                delete image;
-            }
-        });
-        if (!ratImage->readImages(images) ||
-            images.isEmpty()) {
-            throw rpr::Error((std::string("Failed to load image: ") + path).c_str());
-        }
-
-        // XXX: use the only first image, find out what to do with other images
-        auto image = images[0];
-
-        rpr_image_format format = {};
-        if (image->getPacking() == PACK_SINGLE) {
-            format.num_components = 1;
-        } else if (image->getPacking() == PACK_DUAL) {
-            format.num_components = 2;
-        } else if (image->getPacking() == PACK_RGB) {
-            format.num_components = 3;
-        } else if (image->getPacking() == PACK_RGBA) {
-            format.num_components = 4;
-        } else {
-            throw rpr::Error("Failed to create image: unsupported RAT format");
-        }
-
-        if (image->getFormat() == PXL_INT8) {
-            format.type = RPR_COMPONENT_TYPE_UINT8;
-        } else if (image->getFormat() == PXL_FLOAT16) {
-            format.type = RPR_COMPONENT_TYPE_FLOAT16;
-        } else if (image->getFormat() == PXL_FLOAT32) {
-            format.type = RPR_COMPONENT_TYPE_FLOAT32;
-        } else {
-            throw rpr::Error("Failed to create image: unsupported RAT format");
-        }
-
-        rpr_image_desc desc = GetRprImageDesc(format, image->getXres(), image->getYres());
-        if (desc.image_height < 1 ||
-            desc.image_width < 1) {
-            throw rpr::Error("Failed to create image: incorrect dimensions");
-        }
-
-        // RAT image is flipped in Y axis
-        std::vector<uint8_t> flippedImage;
-        flippedImage.reserve(image->getStride() * desc.image_height);
-        for (int y = 0; y < desc.image_height; ++y) {
-            auto srcData = reinterpret_cast<uint8_t*>(image->getPixels()) + image->getStride() * y;
-            auto dstData = &flippedImage[image->getStride() * (desc.image_height - 1 - y)];
-            std::memcpy(dstData, srcData, image->getStride());
-        }
-
-        rpr_image rprImage = nullptr;
-        RPR_ERROR_CHECK_THROW(rprContextCreateImage(context, format, &desc, flippedImage.data(), &rprImage), "Failed to create image");
-        m_rprObjectHandle = rprImage;
-
-        if (image->getColorSpace() == PXL_CS_LINEAR ||
-            image->getColorSpace() == PXL_CS_GAMMA2_2 || 
-            image->getColorSpace() == PXL_CS_CUSTOM_GAMMA) {
-            RPR_ERROR_CHECK_THROW(rprImageSetGamma(rprImage, image->getColorSpaceGamma()), "Failed to set image gamma");
-        }
-
-        return;
-    }
-#endif
     rpr_image image = nullptr;
     RPR_ERROR_CHECK_THROW(rprContextCreateImageFromFile(context, path, &image), "Failed to create image from file");
     m_rprObjectHandle = image;
