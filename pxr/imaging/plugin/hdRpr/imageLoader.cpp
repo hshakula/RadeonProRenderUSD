@@ -93,7 +93,7 @@ std::unique_ptr<HdRprCpuImage> LoadRatImage(std::string const& path) {
 
 } // namespace anonymous
 
-std::unique_ptr<HdRprCpuImage> LoadImage(std::string const& path) {
+std::unique_ptr<HdRprCpuImage> HdRprLoadCpuImage(std::string const& path) {
     if (!GlfImage::IsSupportedImageFile(path)) {
 #ifdef ENABLE_RAT
         if (TfGetExtension(path) == "rat") {

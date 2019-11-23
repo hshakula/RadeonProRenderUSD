@@ -17,7 +17,7 @@ struct HdRprCpuImage {
     float customGamma = kInvalidCustomGamma;
 };
 
-std::unique_ptr<HdRprCpuImage> LoadImage(std::string const& path);
+std::unique_ptr<HdRprCpuImage> HdRprLoadCpuImage(std::string const& path);
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

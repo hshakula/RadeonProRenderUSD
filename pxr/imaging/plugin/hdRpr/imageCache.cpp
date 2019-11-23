@@ -20,7 +20,7 @@ std::shared_ptr<rpr::Image> ImageCache::GetImage(std::string const& path) {
         }
     }
 
-    auto cpuImage = LoadImage(path);
+    auto cpuImage = HdRprLoadCpuImage(path);
     if (!cpuImage) {
         return nullptr;
     }

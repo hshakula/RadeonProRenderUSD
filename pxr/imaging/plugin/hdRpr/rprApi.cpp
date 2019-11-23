@@ -1088,63 +1088,10 @@ public:
     void Update() {
         RecursiveLockGuard rprLock(g_rprAccessMutex);
 
-        if (!m_materialsToCommit.empty()) {
-            // We gather all texture that going to be used for all material we need to commit
-            // So that we can parallelize loading and decoding them
-            // After it we prefill imageCache so that material creation will get already cached images
-            std::set<std::string> uniquePaths;
-            for (auto material : m_materialsToCommit) {
-                auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
-                auto& matAdapter = initialMaterialState->GetMaterialAdapter();
-                for (auto& textureParam : matAdapter.GetTexRprParams()) {
-                    auto& texturePath = textureParam.second.path;
-                    if (uniquePaths.count(texturePath) == 0 &&
-                        !m_imageCache->IsCached(texturePath)) {
-                        uniquePaths.insert(texturePath);
-                    }
-                }
-            }
-
-            std::vector<std::pair<std::string, std::unique_ptr<HdRprCpuImage>>> loadedImages(uniquePaths.size());
-            std::atomic<int> numLoadedImages;
-            WorkParallelForEach(uniquePaths.begin(), uniquePaths.end(),
-                [&loadedImages, &numLoadedImages](std::string const& path) {
-                loadedImages[numLoadedImages++] = {path, LoadImage(path)};
-            });
-
-            std::vector<std::shared_ptr<rpr::Image>> precachedImages;
-            for (auto& imageEntry : loadedImages) {
-                auto cpuImage = imageEntry.second.get();
-                if (!cpuImage) {
-                    continue;
-                }
-
-                try {
-                    auto rprImage = std::make_shared<rpr::Image>(m_rprContext->GetHandle(), cpuImage->desc, cpuImage->format, cpuImage->data.get());
-                    precachedImages.push_back(rprImage);
-                    m_imageCache->InsertImage(imageEntry.first, rprImage);
-                } catch (rpr::Error const& e) {
-                    TF_RUNTIME_ERROR("Failed to create rpr::Image for \"%s\": %s", imageEntry.first.c_str(), e.what());
-                }
-            }
-
-            for (auto material : m_materialsToCommit) {
-                auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
-                material->m_state = HdRprApiMaterial::CompiledState::Create(initialMaterialState, m_matsys->GetHandle(), m_imageCache.get());
-            }
-            m_materialsToCommit.clear();
-        }
-
-        m_imageCache->GarbageCollectIfNeeded();
-
-        auto& preferences = HdRprConfig::GetInstance();
-        if (m_rprContext->GetActivePluginType() == rpr::PluginType::HYBRID &&
-            preferences.IsDirty(HdRprConfig::DirtyRenderQuality)) {
-            auto quality = preferences.GetRenderQuality();
-            if (quality >= kRenderQualityLow && quality <= kRenderQualityHigh) {
-                rprContextSetParameterByKey1u(m_rprContext->GetHandle(), RPR_CONTEXT_RENDER_QUALITY, quality);
-            }
-        }
+        UpdateSettings();
+        UpdateCamera();
+        UpdateDenoiseFilter();
+        UpdateMaterials();
 
         // In case there is no Lights in scene - create default
         if (!m_isLightPresent) {
@@ -1157,10 +1104,6 @@ public:
                 ResizeAov(aovFb.first, m_viewportSize[0], m_viewportSize[1]);
             }
         }
-
-        UpdateCamera();
-        UpdateSettings();
-        UpdateDenoiseFilter();
 
         for (auto& aovFrameBufferEntry : m_aovFrameBuffers) {
             auto& aovFrameBuffer = aovFrameBufferEntry.second;
@@ -1251,8 +1194,63 @@ public:
             TF_RUNTIME_ERROR("%s", e.what());
         }
 
+        m_imageCache->GarbageCollectIfNeeded();
+
         m_dirtyFlags = ChangeTracker::Clean;
-        preferences.ResetDirty();
+    }
+
+    void UpdateMaterials() {
+        if (m_materialsToCommit.empty()) {
+            return;
+        }
+
+        // We gather all texture that going to be used for all material we need to commit
+            // So that we can parallelize loading and decoding them
+            // After it we prefill imageCache so that material creation will get already cached images
+        std::set<std::string> uniquePaths;
+        for (auto material : m_materialsToCommit) {
+            auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
+            auto& matAdapter = initialMaterialState->GetMaterialAdapter();
+            for (auto& textureParam : matAdapter.GetTexRprParams()) {
+                auto& texturePath = textureParam.second.path;
+                if (uniquePaths.count(texturePath) == 0 &&
+                    !m_imageCache->IsCached(texturePath)) {
+                    uniquePaths.insert(texturePath);
+                }
+            }
+        }
+
+        std::vector<std::pair<std::string, std::unique_ptr<HdRprCpuImage>>> loadedImages(uniquePaths.size());
+        std::atomic<int> numLoadedImages;
+        numLoadedImages.store(0);
+        WorkParallelForEach(uniquePaths.begin(), uniquePaths.end(),
+                            [&loadedImages, &numLoadedImages](std::string path) {
+            if (auto cpuImage = HdRprLoadCpuImage(path)) {
+                loadedImages[numLoadedImages++] = {path, std::move(cpuImage)};
+            }
+        });
+
+        std::vector<std::shared_ptr<rpr::Image>> precachedImages;
+        for (auto& imageEntry : loadedImages) {
+            auto cpuImage = imageEntry.second.get();
+            if (!cpuImage) {
+                continue;
+            }
+
+            try {
+                auto rprImage = std::make_shared<rpr::Image>(m_rprContext->GetHandle(), cpuImage->desc, cpuImage->format, cpuImage->data.get());
+                precachedImages.push_back(rprImage);
+                m_imageCache->InsertImage(imageEntry.first, rprImage);
+            } catch (rpr::Error const& e) {
+                TF_RUNTIME_ERROR("Failed to create rpr::Image for \"%s\": %s", imageEntry.first.c_str(), e.what());
+            }
+        }
+
+        for (auto material : m_materialsToCommit) {
+            auto initialMaterialState = static_cast<HdRprApiMaterial::InitialState*>(material->m_state.get());
+            material->m_state = HdRprApiMaterial::CompiledState::Create(initialMaterialState, m_matsys->GetHandle(), m_imageCache.get());
+        }
+        m_materialsToCommit.clear();
     }
 
     void UpdateTahoeSettings(HdRprConfig& preferences, bool force) {
@@ -1304,6 +1302,7 @@ public:
     }
 
     void UpdateSettings(bool force = false) {
+        // XXX: HdRprConfig instance should be locked until we query all required settings
         auto& preferences = HdRprConfig::GetInstance();
         if (preferences.IsDirty(HdRprConfig::DirtySampling) || force) {
             preferences.CleanDirtyFlag(HdRprConfig::DirtySampling);
@@ -1344,6 +1343,8 @@ public:
 
             m_state = restartRequired ? kStateRestartRequired : kStateRender;
         }
+
+        preferences.ResetDirty();
     }
 
     void UpdateCamera() {
