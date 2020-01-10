@@ -115,10 +115,6 @@ Image::Image(rpr_context context, const char* path) {
     m_rprObjectHandle = image;
 }
 
-Image::Image(rpr_context context, void const* encodedData, size_t dataSize) {
-    throw Error("Image::Image(rpr_context, void const*, size_t) not implemented. This functionality can be added only with RPR 1.34.3");
-}
-
 Image::Image(rpr_context context, rpr_uint width, rpr_uint height, rpr_image_format format, void const* data)
     : Image(context, GetRprImageDesc(format, width, height), format, data) {
 

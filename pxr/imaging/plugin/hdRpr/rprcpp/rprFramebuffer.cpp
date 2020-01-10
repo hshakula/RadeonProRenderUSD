@@ -10,7 +10,7 @@ FrameBuffer::FrameBuffer(rpr_context context, rpr_uint width, rpr_uint height)
     , m_height(height)
     , m_aov(kAovNone) {
     if (!m_context) {
-        throw rpr::Error(RPR_GET_ERROR_MESSAGE(RPR_ERROR_INVALID_CONTEXT, "Failed to create framebuffer"));
+        RPR_ERROR_CHECK_THROW(RPR_ERROR_INVALID_CONTEXT, "Failed to create framebuffer");
     }
     Create();
 }

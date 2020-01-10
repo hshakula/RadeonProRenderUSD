@@ -563,7 +563,7 @@ public:
             auto image = pxr::make_unique<rpr::Image>(m_rprContext->GetHandle(), path.c_str());
             return CreateEnvironmentLight(std::move(image), intensity);
         } catch (rpr::Error const& error) {
-            TF_RUNTIME_ERROR("Failed to create environment light: %s", error.what());
+            error.Notify("create environment light");
         }
 
         return nullptr;
@@ -583,7 +583,7 @@ public:
             auto image = pxr::make_unique<rpr::Image>(m_rprContext->GetHandle(), imageSize, imageSize, format, imageData[0].data());
             return CreateEnvironmentLight(std::move(image), intensity);
         } catch (rpr::Error const& error) {
-            TF_RUNTIME_ERROR("Failed to create environment light: %s", error.what());
+            error.Notify("create environment light");
         }
 
         return nullptr;

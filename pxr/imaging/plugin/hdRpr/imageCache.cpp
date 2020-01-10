@@ -85,7 +85,7 @@ std::shared_ptr<rpr::Image> ImageCache::CreateImage(std::string const& path) {
             TF_RUNTIME_ERROR("Failed to load image %s: unsupported format", path.c_str());
         }
     } catch (rpr::Error const& error) {
-        TF_RUNTIME_ERROR("Failed to read image %s: %s", path.c_str(), error.what());
+        error.Notify("read image %s", path.c_str());
     }
 
     return nullptr;

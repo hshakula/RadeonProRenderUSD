@@ -11,7 +11,6 @@ namespace rpr {
 class Image : public Object {
 public:
     Image(rpr_context context, const char* path);
-    Image(rpr_context context, void const* encodedData, size_t dataSize);
     Image(rpr_context context, rpr_uint width, rpr_uint height, rpr_image_format format, void const* data);
     Image(rpr_context context, rpr_image_desc const& imageDesc, rpr_image_format format, void const* data);
     Image(Image&& image) noexcept;
