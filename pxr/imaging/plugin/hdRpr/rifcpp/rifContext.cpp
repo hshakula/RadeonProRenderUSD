@@ -7,6 +7,7 @@
 
 #include <RadeonProRender_CL.h>
 #include <RadeonProRender_GL.h>
+#include <RadeonProRender_Metal.h>
 #include <RadeonImageFilters_cl.h>
 #include <RadeonImageFilters_gl.h>
 #include <RadeonImageFilters_metal.h>
@@ -240,16 +241,21 @@ ContextMetal::ContextMetal(rpr::Context* rprContext, std::string const& modelPat
     if (0 == deviceCount)
         RIF_THROW_ERROR_MSG("No compatible devices");
 
-    rpr_creation_flags contextFlags = 0;
-    rpr_status status = rprContext->GetInfo(RPR_CONTEXT_CREATION_FLAGS, sizeof(rpr_creation_flags), &contextFlags, nullptr);
+    rpr_metal_device metalDevice;
+    rpr_status status = rprContext->GetInfo(rpr::ContextInfo(RPR_METAL_DEVICE), sizeof(rpr_metal_device), &metalDevice, nullptr);
     if (status != RPR_SUCCESS) {
-        throw rif::Error(RPR_GET_ERROR_MESSAGE(status, "Failed to query RPR context creation flags"));
+        throw rif::Error(RPR_GET_ERROR_MESSAGE(status, "Failed to query Metal device", rprContext));
+    }
+
+    rpr_metal_command_queue metalQueue;
+    status = rprContext->GetInfo(rpr::ContextInfo(RPR_METAL_COMMAND_QUEUE), sizeof(rpr_metal_command_queue), &metalQueue, nullptr);
+    if (status != RPR_SUCCESS) {
+        throw rif::Error(RPR_GET_ERROR_MESSAGE(status, "Failed to query Metal command queue", rprContext));
     }
 
     std::vector<rpr_char> path = GetRprCachePath(rprContext);
 
-    // we find the active gpu from the rpr contextFlags and then use that to create the rif context
-    RIF_ERROR_CHECK_THROW(rifCreateContext(RIF_API_VERSION, rifBackendApiType, GpuDeviceIdUsed(contextFlags), path.data(), &m_context), "Failed to create RIF context");
+    RIF_ERROR_CHECK_THROW(rifCreateContextFromMetalContext(RIF_API_VERSION, metalDevice, metalQueue, path.data(), &m_context), "Failed to create RIF context");
 }
 
 std::unique_ptr<Image> ContextMetal::CreateImage(HdRprApiFramebuffer* rprFrameBuffer) {
