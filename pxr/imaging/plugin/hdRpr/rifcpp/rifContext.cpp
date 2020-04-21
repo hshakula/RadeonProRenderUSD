@@ -324,9 +324,9 @@ std::unique_ptr<Context> Context::Create(rpr::Context* rprContext, rpr::ContextM
 
     try {
         std::unique_ptr<Context> rifContext;
-        if (HasGpuContext(contextFlags) &&
-            rprContextMetadata.pluginType != rpr::kPluginHybrid &&
-            !(contextFlags & RPR_CREATION_FLAGS_ENABLE_METAL)) {
+        if (rprContextMetadata.pluginType == rpr::kPluginTahoe &&
+            !(contextFlags & RPR_CREATION_FLAGS_ENABLE_METAL) &&
+            HasGpuContext(contextFlags)) {
             rifContext.reset(new ContextOpenCL(rprContext, modelPath));
         } else {
             rifContext.reset(new ContextCPU(rprContext, modelPath));

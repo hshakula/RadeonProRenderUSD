@@ -29,11 +29,13 @@ HdRprRenderBuffer::HdRprRenderBuffer(SdfPath const& id)
 void HdRprRenderBuffer::Sync(HdSceneDelegate* sceneDelegate,
                              HdRenderParam* renderParam,
                              HdDirtyBits* dirtyBits) {
+    auto rprParam = static_cast<HdRprRenderParam*>(renderParam);
     if (*dirtyBits & DirtyDescription) {
         // hdRpr has the background thread write directly into render buffers,
         // so we need to stop the render thread before reallocating them.
-        static_cast<HdRprRenderParam*>(renderParam)->AcquireRprApiForEdit();
+        rprParam->AcquireRprApiForEdit();
     }
+    m_allowArbitraryFormat = rprParam->GetRprApi()->IsAovFormatConversionAvailable();
 
     HdRenderBuffer::Sync(sceneDelegate, renderParam, dirtyBits);
 }
@@ -61,7 +63,11 @@ bool HdRprRenderBuffer::Allocate(GfVec3i const& dimensions,
 
     m_width = dimensions[0];
     m_height = dimensions[1];
-    m_format = format;
+    if (m_allowArbitraryFormat) {
+        m_format = format;
+    } else {
+        m_format = HdFormatFloat32Vec4;
+    }
     size_t dataByteSize = m_width * m_height * HdDataSizeOfFormat(m_format);
     m_mappedBuffer.resize(dataByteSize, 0);
 

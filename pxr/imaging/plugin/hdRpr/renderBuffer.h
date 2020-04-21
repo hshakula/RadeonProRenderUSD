@@ -62,6 +62,7 @@ private:
     uint32_t m_width = 0u;
     uint32_t m_height = 0u;
     HdFormat m_format = HdFormat::HdFormatInvalid;
+    bool m_allowArbitraryFormat;
 
     std::vector<uint8_t> m_mappedBuffer;
     std::atomic<int> m_numMappers;

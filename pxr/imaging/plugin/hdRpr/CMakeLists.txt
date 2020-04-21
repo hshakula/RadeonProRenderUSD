@@ -90,6 +90,10 @@ if(RPR_BUILD_AS_HOUDINI_PLUGIN)
         ${GENERATION_SCRIPTS_DIR}/houdiniDsGenerator.py)
 endif()
 
+if(RPR_NORTHSTAR_BINARY)
+    set(GEN_SCRIPT_ARGS --northstar ${GEN_SCRIPT_ARGS})
+endif()
+
 add_custom_command(
     COMMAND ${GEN_SCRIPT_PYTHON} ${GEN_SCRIPT} ${GEN_SCRIPT_ARGS}
     DEPENDS ${GENERATION_DEPENDENT_FILES}
