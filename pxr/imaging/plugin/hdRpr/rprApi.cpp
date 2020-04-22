@@ -65,6 +65,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_ENV_SETTING(HDRPR_DISABLE_ALPHA, false,
     "Disable alpha in color AOV. All alpha values would be 1.0");
+TF_DEFINE_ENV_SETTING(HDRPR_FORCE_RENDER_QUALITY, -1,
+    "Define this to override render quality from render settings");
 
 TF_DEFINE_PRIVATE_TOKENS(HdRprAovTokens,
     (albedo) \
@@ -75,6 +77,14 @@ TF_DEFINE_PRIVATE_TOKENS(HdRprAovTokens,
 );
 
 namespace {
+
+RenderQualityType GetRenderQuality(HdRprConfig const& config) {
+    int overrideQuality = TfGetEnvSetting(HDRPR_FORCE_RENDER_QUALITY);
+    if (overrideQuality >= 0 && overrideQuality <= 4) {
+        return static_cast<RenderQualityType>(overrideQuality);
+    }
+    return config.GetRenderQuality();
+}
 
 using RecursiveLockGuard = std::lock_guard<std::recursive_mutex>;
 std::recursive_mutex g_rprAccessMutex;
@@ -1045,7 +1055,7 @@ public:
                 }
 
                 if (config->IsDirty(HdRprConfig::DirtyRenderQuality)) {
-                    auto quality = config->GetRenderQuality();
+                    auto quality = GetRenderQuality(*config);
                     auto newPlugin = GetPluginType(quality);
                     auto activePlugin = m_rprContextMetadata.pluginType;
                     if (newPlugin != activePlugin) {
@@ -1069,7 +1079,7 @@ public:
                     currentRenderQuality = static_cast<RenderQualityType>(currentHybridQuality);
                 }
 
-                clearAovs = currentRenderQuality != config->GetRenderQuality();
+                clearAovs = currentRenderQuality != GetRenderQuality(*config);
             }
 
             UpdateSettings(*config);
@@ -1132,7 +1142,7 @@ public:
 
     void UpdateHybridSettings(HdRprConfig const& preferences, bool force) {
         if (preferences.IsDirty(HdRprConfig::DirtyRenderQuality) || force) {
-            auto quality = preferences.GetRenderQuality();
+            auto quality = GetRenderQuality(preferences);
             if (quality < kRenderQualityFull) {
                 RPR_ERROR_CHECK(m_rprContext->SetParameter(rpr::ContextInfo(RPR_CONTEXT_RENDER_QUALITY), int(quality)), "Fail to set context hybrid render quality");
             }
@@ -1148,7 +1158,7 @@ public:
             }
         }
 
-        m_currentRenderQuality = preferences.GetRenderQuality();
+        m_currentRenderQuality = GetRenderQuality(preferences);
 
         if (m_rprContextMetadata.pluginType == rpr::kPluginTahoe ||
             m_rprContextMetadata.pluginType == rpr::kPluginNorthStar) {
@@ -1591,7 +1601,7 @@ private:
             // Force sync to catch up the latest render quality and render device
             config->Sync(m_delegate);
 
-            renderQuality = config->GetRenderQuality();
+            renderQuality = GetRenderQuality(*config);
             m_rprContextMetadata.renderDeviceType = static_cast<rpr::RenderDeviceType>(config->GetRenderDevice());
         }
 
