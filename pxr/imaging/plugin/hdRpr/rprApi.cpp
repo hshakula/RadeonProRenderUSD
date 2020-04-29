@@ -1661,7 +1661,9 @@ private:
         // In case we have RIF we can use it to combine opacity and color AOVs
         // into image that can be used for alpha compositing,
         // without it color AOV always have 1.0 in alpha channel
-        if (!TfGetEnvSetting(HDRPR_DISABLE_ALPHA)) {
+        // XXX: Northstar allows OPACITY aov creation but it's always zeroed
+        if (m_rprContextMetadata.pluginType != rpr::kPluginNorthStar &&
+            !TfGetEnvSetting(HDRPR_DISABLE_ALPHA)) {
             initInternalAov(HdRprAovTokens->opacity);
         }
 
