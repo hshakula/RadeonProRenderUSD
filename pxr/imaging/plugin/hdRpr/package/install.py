@@ -94,8 +94,18 @@ def install_to_custom_dir(package):
             break
         print('Invalid path. Please try again')
 
-valid_targets = ['Houdini']
+def install_usd_package(package):
+    print('Please enter USD\'s path:')
+    while True:
+        path = input()
+        if os.path.isdir(path):
+            install_package(path, package, force=True)
+            break
+        print('Invalid path. Please try again')
+
+valid_targets = ['Houdini', 'USD']
 package_pattern = re.compile(r'hdRpr-.*-(?P<target>.*?)-.*-(?P<platform_>.*?).tar.gz', re.VERBOSE)
+
 def get_package_from_path(path):
     match = package_pattern.match(path)
 
@@ -146,38 +156,42 @@ else:
 
 print('Installing "{}"'.format(package[0]))
 
-if args.install_dir:
-    install_package(args.install_dir, package)
-elif 'HFS' in os.environ:
-    install_to_houdini_dir(os.environ['HFS'], package)
+if package[1] == 'USD':
+    install_usd_package(package)
 else:
-    install_variants = set()
-    for search_path in hfs_search_paths:
-        for path in glob.glob(search_path):
-            if os.path.islink(path):
-                path = os.path.realpath(path)
-            if is_valid_install_dir(path):
-                install_variants.add(path)
-
-    install_variants = list(install_variants)
-
-    if len(install_variants) == 0:
-        print('Could not find any Houdini installation directories.')
-        install_to_custom_dir(package)
-    elif len(install_variants) == 1:
-        install_to_houdini_dir(install_variants[0], package)
+    if args.install_dir:
+        install_package(args.install_dir, package)
+    elif 'HFS' in os.environ:
+        install_to_houdini_dir(os.environ['HFS'], package)
     else:
-        print('Few Houdini installation has been found. Select the desired one.')
-        for i, path in enumerate(install_variants, start=1):
-            print('{}. "{}"'.format(i, path))
-        custom_path_idx = len(install_variants)
-        print('{}. Custom path'.format(custom_path_idx))
-        print('Enter number.')
-        try:
-            idx = int(input()) - 1
-            if idx == custom_path_idx:
-                install_to_custom_dir(package)
-            else:
-                install_to_houdini_dir(install_variants[idx], package, force=True)
-        except (ValueError, IndexError) as e:
-            print('Installation canceled: incorrect number.')
+        install_variants = set()
+        for search_path in hfs_search_paths:
+            for path in glob.glob(search_path):
+                if os.path.islink(path):
+                    path = os.path.realpath(path)
+                if is_valid_install_dir(path):
+                    install_variants.add(path)
+
+        install_variants = list(install_variants)
+
+        if len(install_variants) == 0:
+            print('Could not find any Houdini installation directories.')
+            install_to_custom_dir(package)
+        elif len(install_variants) == 1:
+            install_to_houdini_dir(install_variants[0], package)
+        else:
+            print('Few Houdini installation has been found. Select the desired one.')
+            for i, path in enumerate(install_variants):
+                print('{}. "{}"'.format(i + 1, path))
+            custom_path_idx = len(install_variants)
+            print('{}. Custom path'.format(custom_path_idx + 1))
+            print('Enter number.')
+            try:
+                idx = int(input()) - 1
+                if idx == custom_path_idx:
+                    install_to_custom_dir(package)
+                else:
+                    install_to_houdini_dir(install_variants[idx], package, force=True)
+            except (ValueError, IndexError) as e:
+                print('Installation canceled: incorrect number.')
+
