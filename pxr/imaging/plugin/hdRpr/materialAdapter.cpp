@@ -457,7 +457,7 @@ void MaterialAdapter::PopulateUsdPreviewSurface(const MaterialParams& params, co
     }
 
     auto opacityParam = params.find(HdRprMaterialTokens->opacity);
-    if (textures.count(HdRprMaterialTokens->opacity) == 0 ||
+    if (textures.count(HdRprMaterialTokens->opacity) ||
         (opacityParam != params.end() && opacityParam->second.IsHolding<float>() && opacityParam->second.UncheckedGet<float>() != 1.0f)) {
         useSpecular = 1;
     }
