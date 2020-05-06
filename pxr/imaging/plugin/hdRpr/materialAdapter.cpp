@@ -327,7 +327,6 @@ MaterialAdapter::MaterialAdapter(EMaterialType type, const HdMaterialNetwork& su
         }
         case EMaterialType::HOUDINI_PRINCIPLED_SHADER: {
             PopulateHoudiniPrincipledShader(surfaceNetwork, displacementNetwork);
-            m_stName = UsdUtilsGetPrimaryUVSetName();
             break;
         }
         default:
@@ -523,7 +522,8 @@ TF_DEFINE_PRIVATE_TOKENS(HoudiniPrincipledShaderTokens,
     ((displacementColorSpace, "dispTex_colorSpace")) \
     ((displacementChannel, "dispTex_channel")) \
     ((displacementWrap, "dispTex_wrap")) \
-    ((displacementType, "dispTex_type"))
+    ((displacementType, "dispTex_type")) \
+    (stVarname)
 );
 
 std::map<TfToken, VtValue> g_houdiniPrincipledShaderParameterDefaultValues = {
@@ -597,6 +597,7 @@ void MaterialAdapter::PopulateHoudiniPrincipledShader(HdMaterialNetwork const& s
     auto subsurfaceModel = GetParameter(HoudiniPrincipledShaderTokens->subsurfaceModel, params, std::string("full"));
     auto iorMode = RPR_UBER_MATERIAL_IOR_MODE_PBR;
     bool useBaseColorTextureAlpha = false;
+    m_stName = GetParameter(HoudiniPrincipledShaderTokens->stVarname, params, UsdUtilsGetPrimaryUVSetName());
 
     auto getMaterialTexture = [&](TfToken const& baseParameter) -> MaterialTexture {
         MaterialTexture texture;
