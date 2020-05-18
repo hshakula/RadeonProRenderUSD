@@ -120,10 +120,9 @@ def generate_houdini_ds(install_path, ds_name, settings):
             render_param_values = []
             default_value = setting['defaultValue']
             c_type_str = type(default_value).__name__
-            controlled_type = c_type_str
             if c_type_str == 'str':
-                c_type_str = 'TfToken'
-                controlled_type = 'string'
+                c_type_str = 'string'
+                default_value = '"{}"'.format(default_value)
             render_param_type = c_type_str
             render_param_default = default_value
             if isinstance(default_value, bool):
@@ -141,7 +140,7 @@ def generate_houdini_ds(install_path, ds_name, settings):
             houdini_params += control_param_template.format(
                 name=control_param_name,
                 label=houdini_param_label,
-                controlled_type=controlled_type,
+                controlled_type=c_type_str,
                 hidewhen=houdini_hidewhen)
             houdini_params += CreateHoudiniParam(name, houdini_param_label, render_param_type, render_param_default,
                 values=render_param_values,

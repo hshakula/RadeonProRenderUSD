@@ -24,7 +24,14 @@ for setting in light_visibility_flag_settings:
 light_settings = [
     {
         'name': 'Light',
-        'settings': light_visibility_flag_settings
+        'settings': [
+            {
+                'name': 'primvars:rpr:portals',
+                'ui_name': 'Portals',
+                'help': 'List of mesh primitives to be used as portals. Relevant for domelight only.',
+                'defaultValue': ''
+            }
+        ] + light_visibility_flag_settings
     }
 ]
 

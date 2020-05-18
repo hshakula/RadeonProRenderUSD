@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "domeLight.h"
 #include "renderParam.h"
+#include "primvarUtil.h"
 #include "rprApi.h"
 
 #include "pxr/usd/ar/resolver.h"
@@ -20,9 +21,14 @@ limitations under the License.
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/usd/sdf/assetPath.h"
 #include "pxr/usd/usdLux/blackbody.h"
+#include "pxr/usd/usdLux/tokens.h"
 #include "pxr/base/tf/envSetting.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((portals, "rpr:portals"))
+);
 
 TF_DEFINE_ENV_SETTING(HDRPR_INVERT_DOME_LIGHT_Z_AXIS, true,
     "In Houdini 18.0.287 we needed to invert X-axis of dome light to match with Karma,"
@@ -50,6 +56,29 @@ void HdRprDomeLight::Sync(HdSceneDelegate* sceneDelegate,
 
     SdfPath const& id = GetId();
     HdDirtyBits bits = *dirtyBits;
+
+    auto portalsParam = sceneDelegate->GetLightParamValue(id, UsdLuxTokens->portals);
+    auto portalsParamType = portalsParam.GetTypeName();
+
+    std::map<HdInterpolation, HdPrimvarDescriptorVector> primvarDescs;
+    HdRprFillPrimvarDescsPerInterpolation(sceneDelegate, id, &primvarDescs);
+
+    for (auto& entry : primvarDescs) {
+        for (auto& desc : entry.second) {
+            auto name = desc.name.GetText();
+            if (desc.name == _tokens->portals) {
+                auto value = sceneDelegate->Get(id, desc.name);
+                portalsParamType = value.GetTypeName();
+                if (value.IsHolding<std::string>()) {
+                    auto& pathStr = value.UncheckedGet<std::string>();
+                    if (SdfPath::IsValidPathString(pathStr)) {
+                        SdfPath path(pathStr);
+                    }
+                }
+            }
+            int a = 0;
+        }
+    }
 
     if (bits & HdLight::DirtyTransform) {
         m_transform = GfMatrix4f(sceneDelegate->GetLightParamValue(id, HdLightTokens->transform).Get<GfMatrix4d>());
