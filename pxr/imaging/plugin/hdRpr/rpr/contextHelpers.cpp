@@ -23,6 +23,7 @@ limitations under the License.
 #include <RadeonProRender.hpp>
 #include <RadeonProRender_VK.h>
 #include <RadeonProRender_Baikal.h>
+#include <RadeonProRender_D3D12.h>
 #include <vulkan/vulkan.h>
 
 #ifdef __APPLE__
@@ -282,13 +283,15 @@ Context* CreateContext(char const* cachePath, ContextMetadata* metadata) {
         std::uint32_t sbuf_size = 512 * MB;
 
         rpr_context_properties properties[] {
-            (rpr_context_properties)RPR_CONTEXT_CREATEPROP_VK_INTEROP_INFO, (rpr_context_properties)metadata->interopInfo,
+            (rpr_context_properties)RPR_CONTEXT_CREATEPROP_D3D12_INTEROP_INFO, (rpr_context_properties)metadata->interopInfo,
             (rpr_context_properties)RPR_CONTEXT_CREATEPROP_HYBRID_ACC_MEMORY_SIZE, (rpr_context_properties)&acc_size,
             (rpr_context_properties)RPR_CONTEXT_CREATEPROP_HYBRID_VERTEX_MEMORY_SIZE, (rpr_context_properties)&vbuf_size,
             (rpr_context_properties)RPR_CONTEXT_CREATEPROP_HYBRID_INDEX_MEMORY_SIZE, (rpr_context_properties)&ibuf_size,
             (rpr_context_properties)RPR_CONTEXT_CREATEPROP_HYBRID_STAGING_MEMORY_SIZE, (rpr_context_properties)&sbuf_size,
             0
         };
+
+        flags = RPR_CREATION_FLAGS_ENABLE_D3D12_INTEROP | RPR_CREATION_FLAGS_ENABLE_GPU0;
 
         context = Context::Create(RPR_API_VERSION, &pluginID, 1, flags, properties, cachePath, &status);
     } else {

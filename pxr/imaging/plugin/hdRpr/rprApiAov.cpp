@@ -16,6 +16,7 @@ limitations under the License.
 #include "rprApiFramebuffer.h"
 #include "rifcpp/rifError.h"
 #include "rpr/error.h"
+#include <iostream>
 
 PXR_NAMESPACE_OPEN_SCOPE
 

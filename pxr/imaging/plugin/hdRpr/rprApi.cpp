@@ -1449,12 +1449,25 @@ public:
         std::unique_lock<std::mutex> lock(m_rprContext->GetMutex());
         m_presentedConditionVariable->wait(lock, [this] { return *m_presentedCondition == true; });
 
-        rpr_int status = m_rprContextFlushFrameBuffers(m_rprContext->Handle());
+        /*rpr_int status = m_rprContextFlushFrameBuffers(m_rprContext->Handle());
         if (status != RPR_SUCCESS) {
             TF_WARN("rprContextFlushFrameBuffers returns: %d", status);
-        }
+        }*/
+
+        std::cout << "[Plugin] Before save\n";
+
+        lock.unlock();
+
+        rpr_framebuffer fb;
+        rprContextGetAOV(m_rprContext->Handle(), RPR_AOV_COLOR, &fb);
+        std::cout << "[Plugin] Got AOV: " << fb << "\n";
+
+        rprFrameBufferSaveToFile(fb, "out.png");
+
+        std::cout << "[Plugin] After save\n";
 
         *m_presentedCondition = false;
+
     }
 
     void RenderFrame(HdRprRenderThread* renderThread) {
@@ -1717,8 +1730,9 @@ private:
         if (!m_scene) {
             RPR_ERROR_CHECK_THROW(status, "Failed to create scene", m_rprContext.get());
         }
-
+        std::cout << "Scene herre!!!!!\n";
         RPR_ERROR_CHECK_THROW(m_rprContext->SetScene(m_scene.get()), "Failed to set context scene");
+        std::cout << "All good!!!!!!!!!\n";
     }
 
     void InitCamera() {
@@ -1932,16 +1946,15 @@ private:
 
         try {
             if (!aov) {
+                std::cout << "[RPR API] Creation AOV: " << aovName.GetString() << "\n";
                 if (aovName == HdAovTokens->color) {
                     auto colorAov = std::make_shared<HdRprApiColorAov>(width, height, format, m_rprContext.get(), m_rprContextMetadata);
-                    
                     auto opacityAovIter = m_aovRegistry.find(HdRprAovTokens->opacity);
                     if (opacityAovIter != m_aovRegistry.end()) {
                         if (auto opacityAov = opacityAovIter->second.lock()) {
                             colorAov->SetOpacityAov(opacityAov);
                         }
                     }
-
                     aov = colorAov;
                 } else if (aovName == HdAovTokens->normal) {
                     aov = std::make_shared<HdRprApiNormalAov>(width, height, format, m_rprContext.get(), m_rprContextMetadata, m_rifContext.get());
@@ -1959,14 +1972,13 @@ private:
                 } else {
                     aov = std::make_shared<HdRprApiAov>(rprAovIt->second, width, height, format, m_rprContext.get(), m_rprContextMetadata, m_rifContext.get());
                 }
-
                 m_aovRegistry[aovName] = aov;
                 m_dirtyFlags |= ChangeTracker::DirtyAOVRegistry;
             } else {
                 aov->Resize(width, height, format);
             }
         } catch (std::runtime_error const& e) {
-            TF_CODING_ERROR("Failed to create %s AOV: %s", aovName.GetText(), e.what());
+            TF_CODING_ERROR("Failed to create %s AOV: %s, Error type: %s", aovName.GetText(), e.what(), typeid(e).name());
         }
 
         return aov;

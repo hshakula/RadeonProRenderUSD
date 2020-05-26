@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "rprApiFramebuffer.h"
 #include "rpr/helpers.h"
+#include <iostream>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -141,6 +142,7 @@ void HdRprApiFramebuffer::Create(uint32_t width, uint32_t height) {
 
     rpr::Status status;
     m_rprFb = m_context->CreateFrameBuffer(format, desc, &status);
+    std::cout << "[HdRprApiFramebuffer::Create] GET: " << m_rprFb << "\n";
     if (!m_rprFb) {
         RPR_ERROR_CHECK_THROW(status, "Failed to create framebuffer");
     }
