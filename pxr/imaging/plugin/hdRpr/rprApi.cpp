@@ -1437,6 +1437,7 @@ public:
             return;
         }
 
+        std::cout << "[Plugin] Render\n";
         // For now render 5 frames before each present
         for (int i = 0; i < 5; i++) {
             rpr::Status status = m_rprContext->Render();
@@ -1449,14 +1450,14 @@ public:
         std::unique_lock<std::mutex> lock(m_rprContext->GetMutex());
         m_presentedConditionVariable->wait(lock, [this] { return *m_presentedCondition == true; });
 
-        /*rpr_int status = m_rprContextFlushFrameBuffers(m_rprContext->Handle());
+        std::cout << "[Plugin] Flush before\n";
+        rpr_int status = m_rprContextFlushFrameBuffers(m_rprContext->Handle());
         if (status != RPR_SUCCESS) {
             TF_WARN("rprContextFlushFrameBuffers returns: %d", status);
-        }*/
+        }
+        std::cout << "[Plugin] Flush after\n";
 
-        std::cout << "[Plugin] Before save\n";
-
-        lock.unlock();
+        /*lock.unlock();
 
         rpr_framebuffer fb;
         rprContextGetAOV(m_rprContext->Handle(), RPR_AOV_COLOR, &fb);
@@ -1464,7 +1465,7 @@ public:
 
         rprFrameBufferSaveToFile(fb, "out.png");
 
-        std::cout << "[Plugin] After save\n";
+        std::cout << "[Plugin] After save\n";*/
 
         *m_presentedCondition = false;
 
