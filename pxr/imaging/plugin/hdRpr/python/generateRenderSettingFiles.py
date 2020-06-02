@@ -31,6 +31,22 @@ def hidewhen_not_ambient_occlusion_mode(render_setting_categories):
 
 render_setting_categories = [
     {
+        'name': 'ViewportPreset',
+        'settings': [
+            {
+                'name': 'viewportPreset',
+                'ui_name': 'Viewport Preset',
+                'defaultValue': 'None',
+                'values': [
+                    'None',
+                    'Lookdev',
+                    'Lighting',
+                    'Modelling'
+                ]
+            }
+        ]
+    },
+    {
         'name': 'RenderQuality',
         'disabled_platform': ['Darwin'],
         'settings': [
