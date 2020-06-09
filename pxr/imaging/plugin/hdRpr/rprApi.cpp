@@ -86,8 +86,7 @@ RenderQualityType GetRenderQuality(HdRprConfig const& config) {
     return config.GetRenderQuality();
 }
 
-using RecursiveLockGuard = std::lock_guard<std::recursive_mutex>;
-std::recursive_mutex g_rprAccessMutex;
+using LockGuard = std::lock_guard<std::mutex>;
 
 bool ArchCreateDirectory(const char* path) {
 #ifdef WIN32
@@ -112,7 +111,7 @@ struct HdRprApiVolume {
     std::unique_ptr<rpr::Grid> densityGrid;
     std::unique_ptr<rpr::Grid> emissionGrid;
     std::unique_ptr<rpr::Shape> cubeMesh;
-    std::unique_ptr<HdRprApiMaterial> cubeMeshMaterial;
+    HdRprApiMaterial* cubeMeshMaterial;
     GfMatrix4f voxelsTransform;
 };
 
@@ -142,7 +141,7 @@ static const std::map<TfToken, rpr_aov> kAovTokenToRprAov = {
 
 class HdRprApiImpl {
 public:
-    HdRprApiImpl(HdRenderDelegate* delegate)
+    HdRprApiImpl(HdRprDelegate* delegate)
         : m_delegate(delegate) {
         // Postpone initialization as further as possible to allow Hydra user to set custom render settings before creating a context
         //InitIfNeeded();
@@ -153,7 +152,8 @@ public:
             return;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        static std::mutex s_rprInitMutex;
+        LockGuard lock(s_rprInitMutex);
 
         if (m_state != kStateUninitialized) {
             return;
@@ -250,7 +250,7 @@ public:
             uvIndicesData = nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         rpr::Status status;
         auto mesh = m_rprContext->CreateShape(
@@ -279,7 +279,7 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         rpr::Status status;
         auto mesh = m_rprContext->CreateShapeInstance(prototype, &status);
@@ -306,7 +306,7 @@ public:
             return;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         bool dirty = true;
 
@@ -336,7 +336,7 @@ public:
             RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_AND_CORNER :
             RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_ONLY;
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         bool dirty = true;
 
@@ -353,19 +353,19 @@ public:
     }
 
     void SetMeshMaterial(rpr::Shape* mesh, HdRprApiMaterial const* material, bool doublesided, bool displacementEnabled) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         m_materialFactory->AttachMaterial(mesh, material, doublesided, displacementEnabled);
         m_dirtyFlags |= ChangeTracker::DirtyScene;
     }
 
     void SetCurveMaterial(rpr::Curve* curve, HdRprApiMaterial const* material) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         m_materialFactory->AttachMaterial(curve, material);
         m_dirtyFlags |= ChangeTracker::DirtyScene;
     }
 
     void SetCurveVisibility(rpr::Curve* curve, uint32_t visibilityMask) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid) {
             // XXX (Hybrid): rprCurveSetVisibility not supported, emulate visibility using attach/detach
             if (visibilityMask) {
@@ -390,7 +390,7 @@ public:
 
     void Release(rpr::Curve* curve) {
         if (curve) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
 
             if (!RPR_ERROR_CHECK(m_scene->Detach(curve), "Failed to detach curve from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
@@ -401,7 +401,7 @@ public:
 
     void Release(rpr::Shape* shape) {
         if (shape) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
 
             if (!RPR_ERROR_CHECK(m_scene->Detach(shape), "Failed to detach mesh from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
@@ -411,7 +411,7 @@ public:
     }
 
     void SetMeshVisibility(rpr::Shape* mesh, uint32_t visibilityMask) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid) {
             // XXX (Hybrid): rprShapeSetVisibility not supported, emulate visibility using attach/detach
             if (visibilityMask) {
@@ -436,7 +436,7 @@ public:
     }
 
     void SetMeshId(rpr::Shape* mesh, uint32_t id) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         RPR_ERROR_CHECK(mesh->SetObjectID(id), "Failed to set mesh id");
     }
 
@@ -462,7 +462,7 @@ public:
             creationFlags |= rpr::kCurveCreationFlagTapered;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         rpr::Status status;
         auto curve = m_rprContext->CreateCurve(
@@ -488,7 +488,7 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         rpr::Status status;
         auto light = creator(&status);
@@ -503,6 +503,7 @@ public:
         }
 
         m_dirtyFlags |= ChangeTracker::DirtyScene;
+        m_numLights++;
         return light;
     }
 
@@ -548,7 +549,7 @@ public:
     }
 
     void SetDirectionalLightAttributes(rpr::DirectionalLight* light, GfVec3f const& color, float shadowSoftnessAngle) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         RPR_ERROR_CHECK(light->SetRadiantPower(color[0], color[1], color[2]), "Failed to set directional light color");
         RPR_ERROR_CHECK(light->SetShadowSoftnessAngle(GfClamp(shadowSoftnessAngle, 0.0f, float(M_PI_4))), "Failed to set directional light color");
@@ -556,23 +557,41 @@ public:
 
     template <typename Light>
     void SetLightColor(Light* light, GfVec3f const& color) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         RPR_ERROR_CHECK(light->SetRadiantPower(color[0], color[1], color[2]), "Failed to set light color");
     }
 
     void Release(rpr::Light* light) {
         if (light) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
 
             if (!RPR_ERROR_CHECK(m_scene->Detach(light), "Failed to detach light from scene")) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
             delete light;
+            m_numLights--;
+        }
+    }
+
+    HdRprApiMaterial* CreateGeometryLightMaterial(GfVec3f const& emissionColor) {
+        MaterialAdapter matAdapter(EMaterialType::EMISSIVE, MaterialParams{ {HdAovTokens->color, VtValue(emissionColor)} });
+        auto material = CreateMaterial(matAdapter);
+        if (material) m_numLights++;
+        return material;
+    }
+
+    void ReleaseGeometryLightMaterial(HdRprApiMaterial* material) {
+        if (material) {
+            m_numLights--;
+            Release(material);
         }
     }
 
     HdRprApiEnvironmentLight* CreateEnvironmentLight(std::unique_ptr<rpr::Image>&& image, float intensity) {
+        // XXX (RPR): default environment light should be removed before creating a new one - RPR limitation
+        RemoveDefaultLight();
+
         auto envLight = new HdRprApiEnvironmentLight;
 
         rpr::Status status;
@@ -603,12 +622,13 @@ public:
         }
 
         m_dirtyFlags |= ChangeTracker::DirtyScene;
+        m_numLights++;
         return envLight;
     }
 
     void Release(HdRprApiEnvironmentLight* envLight) {
         if (envLight) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
 
             rpr::Status status;
             if (envLight->state == HdRprApiEnvironmentLight::kAttachedAsEnvLight) {
@@ -621,6 +641,7 @@ public:
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
             delete envLight;
+            m_numLights--;
         }
     }
 
@@ -629,7 +650,7 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         auto image = std::unique_ptr<rpr::Image>(rpr::CreateImage(m_rprContext.get(), path.c_str()));
         if (!image) {
@@ -649,6 +670,8 @@ public:
         rpr_uint imageSize = m_rprContextMetadata.pluginType == rpr::kPluginHybrid ? 64 : 1;
         std::vector<std::array<float, 3>> imageData(imageSize * imageSize, backgroundColor);
 
+        LockGuard rprLock(m_rprContext->GetMutex());
+
         rpr::Status status;
         auto image = std::unique_ptr<rpr::Image>(rpr::CreateImage(m_rprContext.get(), imageSize, imageSize, format, imageData.data(), &status));
         if (!image) {
@@ -660,7 +683,7 @@ public:
     }
 
     void SetTransform(rpr::SceneObject* object, GfMatrix4f const& transform) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         if (!RPR_ERROR_CHECK(object->SetTransform(transform.GetArray(), false), "Fail set object transform")) {
             m_dirtyFlags |= ChangeTracker::DirtyScene;
         }
@@ -779,7 +802,7 @@ public:
 
         auto rprStartTransform = GfMatrix4f(startTransform);
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         RPR_ERROR_CHECK(shape->SetTransform(rprStartTransform.GetArray(), false), "Fail set shape transform");
         RPR_ERROR_CHECK(shape->SetLinearMotion(linearMotion[0], linearMotion[1], linearMotion[2]), "Fail to set shape linear motion");
@@ -793,7 +816,7 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         return m_materialFactory->CreateMaterial(MaterialAdapter.GetType(), MaterialAdapter);
     }
 
@@ -802,13 +825,13 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         return m_materialFactory->CreatePointsMaterial(colors);
     }
 
     void Release(HdRprApiMaterial* material) {
         if (material) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
             m_materialFactory->Release(material);
         }
     }
@@ -821,14 +844,19 @@ public:
             return nullptr;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        auto cubeMesh = CreateCubeMesh(1.0f, 1.0f, 1.0f);
+        if (!cubeMesh) {
+            return nullptr;
+        }
+
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         auto rprApiVolume = new HdRprApiVolume;
 
         MaterialAdapter matAdapter(EMaterialType::TRANSPERENT,
             MaterialParams{{HdPrimvarRoleTokens->color, VtValue(GfVec4f(1.0f))}});
-        rprApiVolume->cubeMeshMaterial.reset(CreateMaterial(matAdapter));
-        rprApiVolume->cubeMesh.reset(CreateCubeMesh(1.0f, 1.0f, 1.0f));
+        rprApiVolume->cubeMeshMaterial = m_materialFactory->CreateMaterial(matAdapter.GetType(), matAdapter);
+        rprApiVolume->cubeMesh.reset(cubeMesh);
 
         rpr::Status densityGridStatus;
         rprApiVolume->densityGrid.reset(m_rprContext->CreateGrid(gridSize[0], gridSize[1], gridSize[2],
@@ -871,7 +899,11 @@ public:
             RPR_ERROR_CHECK(albedoGridStatus, "Failed to create albedo grid");
             RPR_ERROR_CHECK(emissionGridStatus, "Failed to create emission grid");
             RPR_ERROR_CHECK(status, "Failed to create hetero volume");
+
+            m_scene->Detach(rprApiVolume->heteroVolume.get());
+            m_materialFactory->Release(rprApiVolume->cubeMeshMaterial);
             delete rprApiVolume;
+
             return nullptr;
         }
 
@@ -900,7 +932,7 @@ public:
         if (rprApiVolume->volumeMaterial) {
             RPR_ERROR_CHECK(rprApiVolume->cubeMesh->SetVolumeMaterial(rprApiVolume->volumeMaterial.get()), "Failed to set volume material");
         }
-        SetMeshMaterial(rprApiVolume->cubeMesh.get(), rprApiVolume->cubeMeshMaterial.get(), true, false);
+        m_materialFactory->AttachMaterial(rprApiVolume->cubeMesh.get(), rprApiVolume->cubeMeshMaterial, true, false);
 
         rprApiVolume->voxelsTransform = GfMatrix4f(1.0f);
         rprApiVolume->voxelsTransform.SetScale(GfCompMult(voxelSize, gridSize));
@@ -912,7 +944,7 @@ public:
     void SetTransform(HdRprApiVolume* volume, GfMatrix4f const& transform) {
         auto t = transform * volume->voxelsTransform;
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
         RPR_ERROR_CHECK(volume->cubeMesh->SetTransform(t.data(), false), "Failed to set cubeMesh transform");
         RPR_ERROR_CHECK(volume->heteroVolume->SetTransform(t.data(), false), "Failed to set heteroVolume transform");
         m_dirtyFlags |= ChangeTracker::DirtyScene;
@@ -920,7 +952,9 @@ public:
 
     void Release(HdRprApiVolume* volume) {
         if (volume) {
-            RecursiveLockGuard rprLock(g_rprAccessMutex);
+            LockGuard rprLock(m_rprContext->GetMutex());
+
+            m_materialFactory->Release(volume->cubeMeshMaterial);
 
             m_scene->Detach(volume->heteroVolume.get());
             delete volume;
@@ -936,7 +970,7 @@ public:
             return;
         }
 
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         if (m_hdCamera != hdRprCamera) {
             m_hdCamera = hdRprCamera;
@@ -961,14 +995,14 @@ public:
     }
 
     void SetViewportSize(GfVec2i const& size) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         m_viewportSize = size;
         m_dirtyFlags |= ChangeTracker::DirtyViewport;
     }
 
     void SetAovBindings(HdRenderPassAovBindingVector const& aovBindings) {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
+        LockGuard rprLock(m_rprContext->GetMutex());
 
         m_aovBindings = aovBindings;
         m_dirtyFlags |= ChangeTracker::DirtyAOVBindings;
@@ -1001,20 +1035,15 @@ public:
     }
 
     void Update() {
-        RecursiveLockGuard rprLock(g_rprAccessMutex);
-
         m_imageCache->GarbageCollectIfNeeded();
 
         auto rprRenderParam = static_cast<HdRprRenderParam*>(m_delegate->GetRenderParam());
 
         // In case there is no Lights in scene - create default
-        if (!rprRenderParam->HasLights()) {
-            if (!m_defaultLightObject) {
-                const GfVec3f k_defaultLightColor(0.5f, 0.5f, 0.5f);
-                m_defaultLightObject.reset(CreateEnvironmentLight(k_defaultLightColor, 1.f));
-            }
+        if (m_numLights == 0) {
+            AddDefaultLight();
         } else {
-            m_defaultLightObject = nullptr;
+            RemoveDefaultLight();
         }
 
         bool clearAovs = false;
@@ -1094,11 +1123,30 @@ public:
         }
     }
 
+    rpr_uint GetRprRenderMode(RenderModeType mode) {
+        static std::map<RenderModeType, rpr_render_mode> s_mapping = {
+            {kRenderModeGlobalIllumination, RPR_RENDER_MODE_GLOBAL_ILLUMINATION},
+            {kRenderModeDirectIllumination, RPR_RENDER_MODE_DIRECT_ILLUMINATION},
+            {kRenderModeWireframe, RPR_RENDER_MODE_WIREFRAME},
+            {kRenderModeMaterialIndex, RPR_RENDER_MODE_MATERIAL_INDEX},
+            {kRenderModePosition, RPR_RENDER_MODE_POSITION},
+            {kRenderModeNormal, RPR_RENDER_MODE_NORMAL},
+            {kRenderModeTexcoord, RPR_RENDER_MODE_TEXCOORD},
+            {kRenderModeAmbientOcclusion, RPR_RENDER_MODE_AMBIENT_OCCLUSION},
+            {kRenderModeDiffuse, RPR_RENDER_MODE_DIFFUSE},
+        };
+
+        auto it = s_mapping.find(mode);
+        if (it == s_mapping.end()) return RPR_RENDER_MODE_GLOBAL_ILLUMINATION;
+        return it->second;
+    }
+
     void UpdateTahoeSettings(HdRprConfig const& preferences, bool force) {
         if (preferences.IsDirty(HdRprConfig::DirtyAdaptiveSampling) || force) {
             m_varianceThreshold = preferences.GetVarianceThreshold();
+            m_minSamples = preferences.GetMinAdaptiveSamples();
             RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_ADAPTIVE_SAMPLING_THRESHOLD, m_varianceThreshold), "Failed to set as.threshold");
-            RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_ADAPTIVE_SAMPLING_MIN_SPP, preferences.GetMinAdaptiveSamples()), "Failed to set as.minspp");
+            RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_ADAPTIVE_SAMPLING_MIN_SPP, m_minSamples), "Failed to set as.minspp");
 
             if (m_varianceThreshold > 0.0f) {
                 if (!m_internalAovs.count(HdRprAovTokens->variance)) {
@@ -1136,6 +1184,15 @@ public:
             RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_MAX_RECURSION, maxRayDepth), "Failed to set max recursion");
             RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_PREVIEW, int(is_interactive)), "Failed to set preview mode");
 
+            m_dirtyFlags |= ChangeTracker::DirtyScene;
+        }
+
+        if (preferences.IsDirty(HdRprConfig::DirtyRenderMode)) {
+            auto renderMode = preferences.GetRenderMode();
+            RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_RENDER_MODE, GetRprRenderMode(renderMode)), "Failed to set render mode");
+            if (renderMode == kRenderModeAmbientOcclusion) {
+                RPR_ERROR_CHECK(m_rprContext->SetParameter(RPR_CONTEXT_AO_RAY_LENGTH, preferences.GetAoRadius()), "Failed to set ambient occlusion radius");
+            }
             m_dirtyFlags |= ChangeTracker::DirtyScene;
         }
     }
@@ -1386,6 +1443,20 @@ public:
     }
 
     void RenderImpl(HdRprRenderThread* renderThread, std::vector<std::pair<void*, size_t>> const& outputRenderBuffers) {
+        int numSamplesPerIter = 1;
+
+        const bool isBatch = m_delegate->IsBatch();
+        const bool isProgressive = m_delegate->IsProgressive();
+        if (isBatch && !isProgressive) {
+            // Render as many samples as possible per Render call
+            if (m_varianceThreshold > 0.0f) {
+                numSamplesPerIter = m_minSamples;
+            } else {
+                numSamplesPerIter = m_maxSamples;
+            }
+            m_rprContext->SetParameter(RPR_CONTEXT_ITERATIONS, numSamplesPerIter);
+        }
+
         bool stopRequested = false;
         while (!IsConverged() || stopRequested) {
             renderThread->WaitUntilPaused();
@@ -1406,14 +1477,19 @@ public:
                 break;
             }
 
-            m_iter++;
+            m_iter += numSamplesPerIter;
             if (m_varianceThreshold > 0.0f) {
+                if (isBatch && !isProgressive && m_iter == m_minSamples) {
+                    numSamplesPerIter = 1;
+                    m_rprContext->SetParameter(RPR_CONTEXT_ITERATIONS, numSamplesPerIter);
+                }
+
                 if (RPR_ERROR_CHECK(m_rprContext->GetInfo(RPR_CONTEXT_ACTIVE_PIXEL_COUNT, sizeof(m_activePixels), &m_activePixels, NULL), "Failed to query active pixels")) {
                     m_activePixels = -1;
                 }
             }
 
-            if (!IsConverged()) {
+            if (!isBatch && !IsConverged()) {
                 // Last framebuffer resolve will be called after "while" in case framebuffer is converged.
                 // We do not resolve framebuffers in case user requested render stop
                 ResolveFramebuffers(outputRenderBuffers);
@@ -1720,6 +1796,26 @@ private:
         }
 
         m_showRestartRequiredWarning = !fileExists;
+    }
+
+    void AddDefaultLight() {
+        if (!m_defaultLightObject) {
+            const GfVec3f k_defaultLightColor(0.5f, 0.5f, 0.5f);
+            m_defaultLightObject = CreateEnvironmentLight(k_defaultLightColor, 1.f);
+
+            // Do not count default light object
+            m_numLights--;
+        }
+    }
+
+    void RemoveDefaultLight() {
+        if (m_defaultLightObject) {
+            Release(m_defaultLightObject);
+            m_defaultLightObject = nullptr;
+
+            // Do not count default light object
+            m_numLights++;
+        }
     }
 
     void SplitPolygons(const VtIntArray& indexes, const VtIntArray& vpf, VtIntArray& out_newIndexes, VtIntArray& out_newVpf) {
@@ -2100,7 +2196,7 @@ private:
     }
 
 private:
-    HdRenderDelegate* m_delegate;
+    HdRprDelegate* m_delegate;
 
     enum ChangeTracker : uint32_t {
         Clean = 0,
@@ -2132,11 +2228,13 @@ private:
     GfMatrix4d m_cameraProjectionMatrix = GfMatrix4d(1.f);
     HdRprCamera const* m_hdCamera;
 
-    std::unique_ptr<HdRprApiEnvironmentLight> m_defaultLightObject;
+    std::atomic<int> m_numLights{0};
+    HdRprApiEnvironmentLight* m_defaultLightObject = nullptr;
 
     int m_iter = 0;
     int m_activePixels = -1;
     int m_maxSamples = 0;
+    int m_minSamples = 0;
     float m_varianceThreshold = 0.0f;
     RenderQualityType m_currentRenderQuality = kRenderQualityFull;
 
@@ -2154,7 +2252,7 @@ private:
     std::string m_rprSceneExportPath;
 };
 
-HdRprApi::HdRprApi(HdRenderDelegate* delegate) : m_impl(new HdRprApiImpl(delegate)) {
+HdRprApi::HdRprApi(HdRprDelegate* delegate) : m_impl(new HdRprApiImpl(delegate)) {
 
 }
 
@@ -2236,6 +2334,14 @@ void HdRprApi::SetLightColor(rpr::PointLight* light, GfVec3f const& color) {
 
 void HdRprApi::SetLightColor(rpr::IESLight* light, GfVec3f const& color) {
     m_impl->SetLightColor(light, color);
+}
+
+HdRprApiMaterial* HdRprApi::CreateGeometryLightMaterial(GfVec3f const& emissionColor) {
+    return m_impl->CreateGeometryLightMaterial(emissionColor);
+}
+
+void HdRprApi::ReleaseGeometryLightMaterial(HdRprApiMaterial* material) {
+    return m_impl->ReleaseGeometryLightMaterial(material);
 }
 
 HdRprApiVolume* HdRprApi::CreateVolume(

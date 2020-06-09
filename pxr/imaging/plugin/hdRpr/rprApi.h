@@ -35,6 +35,7 @@ limitations under the License.
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+class HdRprDelegate;
 class HdRprRenderThread;
 class MaterialAdapter;
 
@@ -65,7 +66,7 @@ const uint32_t kInvisible = 0u;
 
 class HdRprApi final {
 public:
-    HdRprApi(HdRenderDelegate* delegate);
+    HdRprApi(HdRprDelegate* delegate);
     ~HdRprApi();
 
     HdRprApiEnvironmentLight* CreateEnvironmentLight(const std::string& pathTotexture, float intensity);
@@ -84,6 +85,9 @@ public:
     void SetLightColor(rpr::IESLight* light, GfVec3f const& color);
 
     void Release(rpr::Light* light);
+
+    HdRprApiMaterial* CreateGeometryLightMaterial(GfVec3f const& emissionColor);
+    void ReleaseGeometryLightMaterial(HdRprApiMaterial* material);
 
     struct VolumeMaterialParameters {
         GfVec3f scatteringColor = GfVec3f(1.0f);
