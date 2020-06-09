@@ -639,6 +639,9 @@ void MaterialAdapter::PopulateHoudiniPrincipledShader(HdMaterialNetwork const& s
                     if (it->second.IsHolding<SdfAssetPath>()) {
                         auto& assetPath = it->second.UncheckedGet<SdfAssetPath>();
                         texture.path = assetPath.GetResolvedPath();
+                        if (texture.path.empty()) {
+                            texture.path = assetPath.GetAssetPath();
+                        }
                     }
                 } else if (std::strcmp(texturePropertyName, "Intensity") == 0) {
                     if (it->second.IsHolding<float>()) {
