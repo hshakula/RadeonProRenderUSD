@@ -4,3 +4,6 @@
 [submodule "deps/RPR"]
 	path = deps/RPR
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/RadeonProRenderSDK
+[submodule "rpr/imaging/ipc/thirdparty/tinyProcess"]
+	path = rpr/imaging/ipc/thirdparty/tinyProcess
+	url = https://gitlab.com/eidheim/tiny-process-library

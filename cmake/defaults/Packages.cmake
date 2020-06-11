@@ -68,7 +68,6 @@ find_package(Threads REQUIRED)
 set(PXR_THREAD_LIBS "${CMAKE_THREAD_LIBS_INIT}")
 
 if(HoudiniUSD_FOUND)
-    set(HOUDINI_ROOT "$ENV{HFS}" CACHE PATH "Houdini installation dir")
     find_package(Houdini REQUIRED CONFIG PATHS ${HOUDINI_ROOT}/toolkit/cmake)
 
     set(OPENEXR_LOCATION ${Houdini_USD_INCLUDE_DIR})

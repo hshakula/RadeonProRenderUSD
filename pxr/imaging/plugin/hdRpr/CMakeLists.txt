@@ -1,6 +1,5 @@
 set(PXR_PREFIX pxr/imaging)
 set(PXR_PACKAGE hdRpr)
-add_custom_target(shared_libs)
 
 set(OptLibs ${ARGN})
 set(OptBin ${ARGN})
@@ -60,15 +59,6 @@ if(HoudiniUSD_FOUND)
     install(
         FILES ${CMAKE_CURRENT_SOURCE_DIR}/houdini/rpr_exportRpr1.hda
         DESTINATION "houdini/otls")
-
-    set(PLUG_INFO_ROOT "../../../plugin/usd/hdRpr")
-    set(PLUG_INFO_LIBRARY_PATH "../hdRpr${CMAKE_SHARED_LIBRARY_SUFFIX}")
-    set(PLUG_INFO_RESOURCE_PATH "resources")
-    configure_file(plugInfo.json ${CMAKE_CURRENT_BINARY_DIR}/houdiniPlugInfo.json)
-    install(
-        FILES ${CMAKE_CURRENT_BINARY_DIR}/houdiniPlugInfo.json
-        DESTINATION houdini/dso/usd_plugins
-        RENAME plugInfo.json)
 endif()
 
 if(RPR_NORTHSTAR_BINARY)
@@ -210,29 +200,7 @@ if(NOT HoudiniUSD_FOUND)
     add_subdirectory(usdviewMenu)
 endif()
 
-get_target_property(hdRpr_SOURCES hdRpr SOURCES)
-foreach(FILE ${hdRpr_SOURCES}) 
-    get_filename_component(ABS_FILE ${FILE} ABSOLUTE)
-    file(RELATIVE_PATH relPath ${CMAKE_CURRENT_SOURCE_DIR} ${ABS_FILE})
-
-    string(FIND "${relPath}" ".." out)
-    if("${out}" EQUAL 0)
-        source_group("external" FILES "${FILE}")
-    else()
-        get_filename_component(PARENT_DIR "${FILE}" DIRECTORY)
-        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}" "" GROUP "${PARENT_DIR}")
-        string(REPLACE "/" "\\" GROUP "${GROUP}")
-
-        source_group("${GROUP}" FILES "${FILE}")
-    endif()
-endforeach()
-
-install(
-    CODE
-    "FILE(WRITE \"${CMAKE_INSTALL_PREFIX}/plugin/plugInfo.json\"
-    \"{
-    \\\"Includes\\\": [ \\\"usd/*/resources/\\\" ]
-}\")")
+GroupSources(hdRpr)
 
 if(WIN32)
     install(

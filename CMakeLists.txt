@@ -29,8 +29,31 @@ include(Public)
 
 set(CMAKE_CXX_STANDARD 14)
 
+STRING(REPLACE "/O2" "/Od" CMAKE_CXX_FLAGS_RELWITHDEBINFO ${CMAKE_CXX_FLAGS_RELWITHDEBINFO})
+SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO ${CMAKE_CXX_FLAGS_RELWITHDEBINFO} CACHE STRING "compile flags" FORCE)
 
+install(
+    CODE
+    "FILE(WRITE \"${CMAKE_INSTALL_PREFIX}/plugin/plugInfo.json\"
+    \"{
+    \\\"Includes\\\": [ \\\"usd/*/resources/\\\", \\\"../lib/rpr/*/*/\\\" ]
+}\")")
+
+add_custom_target(shared_libs)
+if(HoudiniUSD_FOUND)
+    install(
+        CODE
+        "FILE(WRITE \"${CMAKE_INSTALL_PREFIX}/houdini/dso/usd_plugins/plugInfo.json\"
+        \"{
+        \\\"Includes\\\": [ \\\"../../../plugin/\\\" ]
+    }\")")
+endif()
+
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
+add_subdirectory(rpr/imaging/ipc)
 add_subdirectory(pxr/imaging/plugin/hdRpr)
+add_subdirectory(pxr/imaging/plugin/hdRprIpc)
 
 install(FILES README.md DESTINATION .)
 install(FILES INSTALL.md DESTINATION .)
