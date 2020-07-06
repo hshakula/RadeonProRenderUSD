@@ -14,6 +14,7 @@ limitations under the License.
 #include "mesh.h"
 #include "instancer.h"
 #include "renderParam.h"
+#include "renderDelegate.h"
 #include "material.h"
 #include "primvarUtil.h"
 #include "rprApi.h"
@@ -150,6 +151,12 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();
 
     SdfPath const& id = GetId();
+
+    if (m_static) {
+        TF_RUNTIME_ERROR("Failed to set \"%s\" mesh as static - already set. DirtyBits - %u", id.GetText(), *dirtyBits);
+        *dirtyBits = HdChangeTracker::Clean;
+        return;
+    }
 
     ////////////////////////////////////////////////////////////////////////
     // 1. Pull scene data.
@@ -595,6 +602,16 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         if (updateTransform) {
             for (auto& rprMesh : m_rprMeshes) {
                 rprApi->SetTransform(rprMesh, m_transformSamples.count, m_transformSamples.times.data(), m_transformSamples.values.data());
+            }
+        }
+
+        if (!m_static) {
+            auto rprDelegate = static_cast<HdRprDelegate*>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+            if (rprDelegate->IsBatch()) {
+                m_static = true;
+                for (auto& rprMesh : m_rprMeshes) {
+                    rprApi->MarkMeshAsStatic(rprMesh);
+                }
             }
         }
     }

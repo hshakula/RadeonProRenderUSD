@@ -90,6 +90,8 @@ private:
     int m_refineLevel = 0;
 
     uint32_t m_visibilityMask;
+
+    bool m_static = false;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

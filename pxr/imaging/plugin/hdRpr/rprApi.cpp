@@ -502,6 +502,11 @@ public:
         RPR_ERROR_CHECK(mesh->SetObjectID(id), "Failed to set mesh id");
     }
 
+    void MarkMeshAsStatic(rpr::Shape* mesh) {
+        LockGuard rprLock(m_rprContext->GetMutex());
+        RPR_ERROR_CHECK(mesh->MarkStatic(true), "Failed to mark mesh as static");
+    }
+
     rpr::Curve* CreateCurve(VtVec3fArray const& points, VtIntArray const& indices, VtFloatArray const& radiuses, VtVec2fArray const& uvs, VtIntArray const& segmentPerCurve) {
         if (!m_rprContext) {
             return nullptr;
@@ -2621,6 +2626,10 @@ void HdRprApi::SetMeshVisibility(rpr::Shape* mesh, uint32_t visibilityMask) {
 
 void HdRprApi::SetMeshId(rpr::Shape* mesh, uint32_t id) {
     m_impl->SetMeshId(mesh, id);
+}
+
+void HdRprApi::MarkMeshAsStatic(rpr::Shape* mesh) {
+    m_impl->MarkMeshAsStatic(mesh);
 }
 
 void HdRprApi::SetCurveMaterial(rpr::Curve* curve, RprUsdMaterial const* material) {
