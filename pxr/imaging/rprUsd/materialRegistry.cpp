@@ -18,6 +18,7 @@ limitations under the License.
 #include "pxr/imaging/rprUsd/imageCache.h"
 #include "pxr/imaging/rprUsd/debugCodes.h"
 #include "pxr/imaging/rprUsd/material.h"
+#include "pxr/imaging/rprUsd/profiler.h"
 #include "pxr/base/tf/instantiateSingleton.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/envSetting.h"
@@ -101,6 +102,8 @@ void RprUsdMaterialRegistry::CommitResources(
         return;
     }
 
+    RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kTextureCommitStart);
+
     using CommitUniqueTextureIndices = std::vector<size_t>;
     auto uniqueTextureIndicesPerCommit = std::make_unique<CommitUniqueTextureIndices[]>(m_textureCommits.size());
 
@@ -152,6 +155,7 @@ void RprUsdMaterialRegistry::CommitResources(
 
     // Read all textures from disk from multi threads
     //
+    RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kTexturesLoadingStart);
     WorkParallelForN(uniqueTextures.size(),
         [&uniqueTextures](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) {
@@ -162,6 +166,7 @@ void RprUsdMaterialRegistry::CommitResources(
             }
         }
     );
+    RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kTexturesLoadingEnd);
 
     // Create rpr::Image for each previously read unique texture
     // XXX(RPR): so as RPR API is single-threaded we cannot parallelize this
@@ -185,6 +190,8 @@ void RprUsdMaterialRegistry::CommitResources(
     }
 
     m_textureCommits.clear();
+
+    RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kTextureCommitEnd);
 }
 
 namespace {

@@ -1230,6 +1230,10 @@ function(_pxr_library NAME)
             PUBLIC_HEADER "${args_PUBLIC_HEADERS}"
     )
 
+    if(RPR_ENABLE_PROFILER)
+        set(profilerEnabled RPR_USD_PROFILER_ENABLE)
+    endif()
+
     set(pythonEnabled "PXR_PYTHON_ENABLED=1")
     if(TARGET shared_libs)
         set(pythonModulesEnabled "PXR_PYTHON_MODULES_ENABLED=1")
@@ -1247,6 +1251,7 @@ function(_pxr_library NAME)
             "PXR_INSTALL_LOCATION=${installLocation}"
             ${pythonModulesEnabled}
             ${apiPrivate}
+            ${profilerEnabled}
     )
 
     # Copy headers to the build directory and include from there and from

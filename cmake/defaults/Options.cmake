@@ -29,6 +29,8 @@ option(PXR_ENABLE_NAMESPACES "Enable C++ namespaces." ON)
 
 option(PXR_SYMLINK_HEADER_FILES "Symlink the header files from, ie, pxr/base/lib/tf to CMAKE_DIR/pxr/base/tf, instead of copying; ensures that you may edit the header file in either location, and improves experience in IDEs which find normally the \"copied\" header, ie, CLion; has no effect on windows" OFF)
 
+option(RPR_ENABLE_PROFILER "Enable profiler" OFF)
+
 # Precompiled headers are a win on Windows, not on gcc.
 set(pxr_enable_pch "OFF")
 if(MSVC)

@@ -36,6 +36,7 @@ limitations under the License.
 #include "pxr/imaging/rprUsd/materialRegistry.h"
 #include "pxr/imaging/rprUsd/contextMetadata.h"
 #include "pxr/imaging/rprUsd/contextHelpers.h"
+#include "pxr/imaging/rprUsd/profiler.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/vec2f.h"
@@ -222,6 +223,8 @@ public:
             return;
         }
 
+        RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kContextCreationStart);
+
         try {
             InitRpr();
             InitRif();
@@ -233,9 +236,11 @@ public:
         } catch (RprUsdError& e) {
             TF_RUNTIME_ERROR("%s", e.what());
             m_state = kStateInvalid;
-        } 
+        }
 
         UpdateRestartRequiredMessageStatus();
+
+        RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kContextCreationEnd);
     }
 
     rpr::Shape* CreateMesh(const VtVec3fArray& points, const VtIntArray& pointIndexes,
@@ -1796,6 +1801,8 @@ Don't show this message again?
     }
 
     void Render(HdRprRenderThread* renderThread) {
+        RprUsdProfiler::DumpSyncStats();
+
         RenderFrame(renderThread);
 
         for (auto& aovBinding : m_aovBindings) {

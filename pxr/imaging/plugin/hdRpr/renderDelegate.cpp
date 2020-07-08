@@ -15,6 +15,7 @@ limitations under the License.
 #include "aovDescriptor.h"
 
 #include "pxr/imaging/rprUsd/materialRegistry.h"
+#include "pxr/imaging/rprUsd/profiler.h"
 #include "pxr/imaging/hd/extComputation.h"
 #include "pxr/base/tf/diagnosticMgr.h"
 #include "pxr/base/tf/getenv.h"
@@ -185,6 +186,8 @@ HdRprDelegate::HdRprDelegate(HdRenderSettingsMap const& renderSettings) {
             });
         TfDiagnosticMgr::GetInstance().AddDelegate(m_diagnosticMgrDelegate.get());
     }
+
+    RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kDelegateCreationEnd);
 }
 
 HdRprDelegate::~HdRprDelegate() {

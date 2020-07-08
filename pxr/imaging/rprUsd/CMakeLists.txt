@@ -18,6 +18,7 @@ pxr_library(rprUsd
         MaterialXFormat
 
     PUBLIC_CLASSES
+        profiler
         contextHelpers
         coreImage
         debugCodes
