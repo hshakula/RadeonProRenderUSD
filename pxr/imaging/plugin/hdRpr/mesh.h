@@ -20,12 +20,12 @@ limitations under the License.
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/matrix4f.h"
 
-namespace rpr { class Shape; }
-
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdRprApi;
 class RprUsdMaterial;
+
+namespace multithread_rpr_api { class Mesh; }
 
 class HdRprMesh final : public HdMesh {
 public:
@@ -59,8 +59,8 @@ private:
     RprUsdMaterial const* GetFallbackMaterial(HdSceneDelegate* sceneDelegate, HdRprApi* rprApi, HdDirtyBits dirtyBits);
 
 private:
-    std::vector<rpr::Shape*> m_rprMeshes;
-    std::vector<std::vector<rpr::Shape*>> m_rprMeshInstances;
+    std::vector<multithread_rpr_api::Mesh*> m_rprMeshes;
+    std::vector<std::vector<multithread_rpr_api::Mesh*>> m_rprMeshInstances;
     RprUsdMaterial* m_fallbackMaterial = nullptr;
 
     SdfPath m_cachedMaterialId;

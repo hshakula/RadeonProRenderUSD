@@ -23,6 +23,7 @@ pxr_library(rprUsd
         coreImage
         debugCodes
         imageCache
+        motion
         material
         materialMappings
         materialRegistry

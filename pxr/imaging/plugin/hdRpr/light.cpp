@@ -16,6 +16,8 @@ limitations under the License.
 #include "primvarUtil.h"
 #include "rprApi.h"
 
+#include "multithreadRprApi/mesh.h"
+
 #include "pxr/base/tf/envSetting.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
@@ -116,7 +118,7 @@ float ComputeLightIntensity(float intensity, float exposure) {
 
 } // namespace anonymous
 
-rpr::Shape* HdRprLight::CreateDiskLightMesh(HdRprApi* rprApi) {
+multithread_rpr_api::Mesh* HdRprLight::CreateDiskLightMesh(HdRprApi* rprApi) {
     constexpr uint32_t kDiskVertexCount = 32;
     constexpr float kRadius = 0.5f;
 
@@ -143,10 +145,10 @@ rpr::Shape* HdRprLight::CreateDiskLightMesh(HdRprApi* rprApi) {
         pointIndices.push_back(centerPointIndex);
     }
 
-    return rprApi->CreateMesh(points, pointIndices, normals, normalIndices, VtVec2fArray(), VtIntArray(), vpf, HdTokens->rightHanded);
+    return multithread_rpr_api::Mesh::Create(points, pointIndices, normals, normalIndices, VtVec2fArray(), VtIntArray(), vpf, HdTokens->rightHanded);
 }
 
-rpr::Shape* HdRprLight::CreateRectLightMesh(HdRprApi* rprApi, bool applyTransform, GfMatrix4f const& transform) {
+multithread_rpr_api::Mesh* HdRprLight::CreateRectLightMesh(HdRprApi* rprApi, bool applyTransform, GfMatrix4f const& transform) {
     constexpr float kHalfSize = 0.5f;
     VtVec3fArray points = {
         GfVec3f(kHalfSize, kHalfSize, 0.0f),
@@ -166,21 +168,21 @@ rpr::Shape* HdRprLight::CreateRectLightMesh(HdRprApi* rprApi, bool applyTransfor
         }
     }
 
-    return rprApi->CreateMesh(points, pointIndices, VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), vpf, HdTokens->rightHanded);
+    return multithread_rpr_api::Mesh::Create(points, pointIndices, VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), vpf, HdTokens->rightHanded);
 }
 
-rpr::Shape* HdRprLight::CreateSphereLightMesh(HdRprApi* rprApi) {
+multithread_rpr_api::Mesh* HdRprLight::CreateSphereLightMesh(HdRprApi* rprApi) {
     auto& topology = UsdImagingGetUnitSphereMeshTopology();
     auto& points = UsdImagingGetUnitSphereMeshPoints();
 
-    return rprApi->CreateMesh(points, topology.GetFaceVertexIndices(), VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), topology.GetFaceVertexCounts(), topology.GetOrientation());
+    return multithread_rpr_api::Mesh::Create(points, topology.GetFaceVertexIndices(), VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), topology.GetFaceVertexCounts(), topology.GetOrientation());
 }
 
-rpr::Shape* HdRprLight::CreateCylinderLightMesh(HdRprApi* rprApi) {
+multithread_rpr_api::Mesh* HdRprLight::CreateCylinderLightMesh(HdRprApi* rprApi) {
     auto& topology = UsdImagingGetUnitCylinderMeshTopology();
     auto& points = UsdImagingGetUnitCylinderMeshPoints();
 
-    return rprApi->CreateMesh(points, topology.GetFaceVertexIndices(), VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), topology.GetFaceVertexCounts(), topology.GetOrientation());
+    return multithread_rpr_api::Mesh::Create(points, topology.GetFaceVertexIndices(), VtVec3fArray(), VtIntArray(), VtVec2fArray(), VtIntArray(), topology.GetFaceVertexCounts(), topology.GetOrientation());
 }
 
 void HdRprLight::SyncAreaLightGeomParams(AreaLight* light, HdSceneDelegate* sceneDelegate, float* intensity) {
@@ -224,7 +226,7 @@ void HdRprLight::CreateAreaLightMesh(HdRprApi* rprApi, HdSceneDelegate* sceneDel
     auto light = new AreaLight;
 
     if (rprApi->IsArbitraryShapedLightSupported()) {
-        rpr::Shape* mesh = nullptr;
+        multithread_rpr_api::Mesh* mesh = nullptr;
         if (m_lightType == HdPrimTypeTokens->diskLight) {
             mesh = CreateDiskLightMesh(rprApi);
         } else if (m_lightType == HdPrimTypeTokens->rectLight) {
@@ -292,8 +294,8 @@ void HdRprLight::CreateAreaLightMesh(HdRprApi* rprApi, HdSceneDelegate* sceneDel
     auto constantPrimvars = sceneDelegate->GetPrimvarDescriptors(GetId(), HdInterpolationConstant);
     HdRprParseGeometrySettings(sceneDelegate, GetId(), constantPrimvars, &geomSettings);
 
-    for (auto& mesh : light->meshes) {
-        rprApi->SetMeshVisibility(mesh, geomSettings.visibilityMask);
+    for (auto mesh : light->meshes) {
+        mesh->SetVisibility(geomSettings.visibilityMask);
     }
 
     m_light = light;
@@ -399,8 +401,8 @@ void HdRprLight::Sync(HdSceneDelegate* sceneDelegate,
                 }
 
                 if (light->material) {
-                    for (auto& mesh : light->meshes) {
-                        rprApi->SetMeshMaterial(mesh, light->material, false);
+                    for (auto mesh : light->meshes) {
+                        mesh->SetMaterial(light->material, false);
                     }
                 }
             }
@@ -434,9 +436,11 @@ void HdRprLight::Sync(HdSceneDelegate* sceneDelegate,
             void operator()(LightVariantEmpty) const {}
             void operator()(AreaLight* light) const {
                 auto modelTransform = light->localTransform * transform;
-                for (auto& mesh : light->meshes) {
-                    rprApi->SetTransform(mesh, modelTransform);
+                for (auto mesh : light->meshes) {
+                    mesh->SetTransform(modelTransform);
                 }
+
+                rprApi->GetMtContext()->EnqueueResourceForCommit(light->meshes.begin(), light->meshes.end());
             }
             void operator()(rpr::PointLight* light) const { rprApi->SetTransform(light, transform); }
             void operator()(rpr::SpotLight* light) const { rprApi->SetTransform(light, transform); }
@@ -466,8 +470,8 @@ void HdRprLight::ReleaseLight(HdRprApi* rprApi) {
         void operator()(rpr::IESLight* light) const { rprApi->Release(light); }
 
         void operator()(AreaLight* light) const {
-            for (auto& mesh : light->meshes) {
-                rprApi->Release(mesh);
+            for (auto mesh : light->meshes) {
+                delete mesh;
             }
             rprApi->ReleaseGeometryLightMaterial(light->material);
             delete light;

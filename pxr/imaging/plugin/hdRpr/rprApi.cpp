@@ -29,6 +29,7 @@ limitations under the License.
 #include "pxr/imaging/glf/uvTextureData.h"
 
 #include "pxr/imaging/rprUsd/error.h"
+#include "pxr/imaging/rprUsd/motion.h"
 #include "pxr/imaging/rprUsd/helpers.h"
 #include "pxr/imaging/rprUsd/coreImage.h"
 #include "pxr/imaging/rprUsd/imageCache.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "pxr/base/arch/fileSystem.h"
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/thisPlugin.h"
-#include "pxr/imaging/pxOsd/tokens.h"
 #include "pxr/usd/usdRender/tokens.h"
 #include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/base/tf/envSetting.h"
@@ -342,90 +342,6 @@ public:
         return mesh;
     }
 
-    rpr::Shape* CreateMeshInstance(rpr::Shape* prototype) {
-        if (!m_rprContext) {
-            return nullptr;
-        }
-
-        LockGuard rprLock(m_rprContext->GetMutex());
-
-        rpr::Status status;
-        auto mesh = m_rprContext->CreateShapeInstance(prototype, &status);
-        if (!mesh) {
-            RPR_ERROR_CHECK(status, "Failed to create mesh instance");
-            return nullptr;
-        }
-
-        if (RPR_ERROR_CHECK(m_scene->Attach(mesh), "Failed to attach mesh to scene")) {
-            delete mesh;
-            return nullptr;
-        }
-        m_dirtyFlags |= ChangeTracker::DirtyScene;
-        return mesh;
-    }
-
-    void SetMeshRefineLevel(rpr::Shape* mesh, const int level) {
-        if (!m_rprContext) {
-            return;
-        }
-
-        if (m_rprContextMetadata.pluginType == kPluginHybrid) {
-            // Not supported
-            return;
-        }
-
-        LockGuard rprLock(m_rprContext->GetMutex());
-
-        bool dirty = true;
-
-        size_t dummy;
-        int oldLevel;
-        if (!RPR_ERROR_CHECK(mesh->GetInfo(RPR_SHAPE_SUBDIVISION_FACTOR, sizeof(oldLevel), &oldLevel, &dummy), "Failed to query mesh subdivision factor")) {
-            dirty = level != oldLevel;
-        }
-
-        if (dirty) {
-            if (RPR_ERROR_CHECK(mesh->SetSubdivisionFactor(level), "Failed to set mesh subdividion level")) return;
-            m_dirtyFlags |= ChangeTracker::DirtyScene;
-        }
-    }
-
-    void SetMeshVertexInterpolationRule(rpr::Shape* mesh, TfToken const& boundaryInterpolation) {
-        if (!m_rprContext) {
-            return;
-        }
-
-        if (m_rprContextMetadata.pluginType == kPluginHybrid) {
-            // Not supported
-            return;
-        }
-
-        rpr_subdiv_boundary_interfop_type newInterfopType = boundaryInterpolation == PxOsdOpenSubdivTokens->edgeAndCorner ?
-            RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_AND_CORNER :
-            RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_ONLY;
-
-        LockGuard rprLock(m_rprContext->GetMutex());
-
-        bool dirty = true;
-
-        size_t dummy;
-        rpr_subdiv_boundary_interfop_type interfopType;
-        if (!RPR_ERROR_CHECK(mesh->GetInfo(RPR_SHAPE_SUBDIVISION_BOUNDARYINTEROP, sizeof(interfopType), &interfopType, &dummy), "Failed to query mesh subdivision interfopType")) {
-            dirty = newInterfopType != interfopType;
-        }
-
-        if (dirty) {
-            if (RPR_ERROR_CHECK(mesh->SetSubdivisionBoundaryInterop(newInterfopType), "Fail set mesh subdividion boundary")) return;
-            m_dirtyFlags |= ChangeTracker::DirtyScene;
-        }
-    }
-
-    void SetMeshMaterial(rpr::Shape* mesh, RprUsdMaterial const* material, bool displacementEnabled) {
-        LockGuard rprLock(m_rprContext->GetMutex());
-        material->AttachTo(mesh, displacementEnabled);
-        m_dirtyFlags |= ChangeTracker::DirtyScene;
-    }
-
     void SetCurveMaterial(rpr::Curve* curve, RprUsdMaterial const* material) {
         LockGuard rprLock(m_rprContext->GetMutex());
         material->AttachTo(curve);
@@ -465,47 +381,6 @@ public:
             };
             delete curve;
         }
-    }
-
-    void Release(rpr::Shape* shape) {
-        if (shape) {
-            LockGuard rprLock(m_rprContext->GetMutex());
-
-            if (!RPR_ERROR_CHECK(m_scene->Detach(shape), "Failed to detach mesh from scene")) {
-                m_dirtyFlags |= ChangeTracker::DirtyScene;
-            };
-            delete shape;
-        }
-    }
-
-    void SetMeshVisibility(rpr::Shape* mesh, uint32_t visibilityMask) {
-        LockGuard rprLock(m_rprContext->GetMutex());
-        if (m_rprContextMetadata.pluginType == kPluginHybrid) {
-            // XXX (Hybrid): rprShapeSetVisibility not supported, emulate visibility using attach/detach
-            if (visibilityMask) {
-                m_scene->Attach(mesh);
-            } else {
-                m_scene->Detach(mesh);
-            }
-            m_dirtyFlags |= ChangeTracker::DirtyScene;
-        } else {
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_PRIMARY_ONLY_FLAG, visibilityMask & kVisiblePrimary), "Failed to set mesh primary visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_SHADOW, visibilityMask & kVisibleShadow), "Failed to set mesh shadow visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_REFLECTION, visibilityMask & kVisibleReflection), "Failed to set mesh reflection visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_REFRACTION, visibilityMask & kVisibleRefraction), "Failed to set mesh refraction visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_TRANSPARENT, visibilityMask & kVisibleTransparent), "Failed to set mesh transparent visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_DIFFUSE, visibilityMask & kVisibleDiffuse), "Failed to set mesh diffuse visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_GLOSSY_REFLECTION, visibilityMask & kVisibleGlossyReflection), "Failed to set mesh glossyReflection visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_GLOSSY_REFRACTION, visibilityMask & kVisibleGlossyRefraction), "Failed to set mesh glossyRefraction visibility");
-            RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_LIGHT, visibilityMask & kVisibleLight), "Failed to set mesh light visibility");
-
-            m_dirtyFlags |= ChangeTracker::DirtyScene;
-        }
-    }
-
-    void SetMeshId(rpr::Shape* mesh, uint32_t id) {
-        LockGuard rprLock(m_rprContext->GetMutex());
-        RPR_ERROR_CHECK(mesh->SetObjectID(id), "Failed to set mesh id");
     }
 
     rpr::Curve* CreateCurve(VtVec3fArray const& points, VtIntArray const& indices, VtFloatArray const& radiuses, VtVec2fArray const& uvs, VtIntArray const& segmentPerCurve) {
@@ -758,128 +633,6 @@ public:
         if (!RPR_ERROR_CHECK(object->SetTransform(transform.GetArray(), false), "Fail set object transform")) {
             m_dirtyFlags |= ChangeTracker::DirtyScene;
         }
-    }
-
-    void DecomposeTransform(GfMatrix4d const& transform, GfVec3f& scale, GfQuatf& orient, GfVec3f& translate) {
-        translate = GfVec3f(transform.ExtractTranslation());
-
-        GfVec3f col[3], skew;
-
-        // Now get scale and shear.
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                col[i][j] = transform[i][j];
-            }
-        }
-
-        scale[0] = col[0].GetLength();
-        col[0] /= scale[0];
-
-        skew[2] = GfDot(col[0], col[1]);
-        // Make Y col orthogonal to X col
-        col[1] = col[1] - skew[2] * col[0];
-
-        scale[1] = col[1].GetLength();
-        col[1] /= scale[1];
-        skew[2] /= scale[1];
-
-        // Compute XZ and YZ shears, orthogonalize Z col
-        skew[1] = GfDot(col[0], col[2]);
-        col[2] = col[2] - skew[1] * col[0];
-        skew[0] = GfDot(col[1], col[2]);
-        col[2] = col[2] - skew[0] * col[1];
-
-        scale[2] = col[2].GetLength();
-        col[2] /= scale[2];
-        skew[1] /= scale[2];
-        skew[0] /= scale[2];
-
-        // At this point, the matrix is orthonormal.
-        // Check for a coordinate system flip. If the determinant
-        // is -1, then negate the matrix and the scaling factors.
-        if (GfDot(col[0], GfCross(col[1], col[2])) < 0.0f) {
-            for (int i = 0; i < 3; i++) {
-                scale[i] *= -1.0f;
-                col[i] *= -1.0f;
-            }
-        }
-
-        float trace = col[0][0] + col[1][1] + col[2][2];
-        if (trace > 0.0f) {
-            float root = std::sqrt(trace + 1.0f);
-            orient.SetReal(0.5f * root);
-            root = 0.5f / root;
-            orient.SetImaginary(
-                root * (col[1][2] - col[2][1]),
-                root * (col[2][0] - col[0][2]),
-                root * (col[0][1] - col[1][0]));
-        } else {
-            static int next[3] = {1, 2, 0};
-            int i, j, k = 0;
-            i = 0;
-            if (col[1][1] > col[0][0]) i = 1;
-            if (col[2][2] > col[i][i]) i = 2;
-            j = next[i];
-            k = next[j];
-
-            float root = std::sqrt(col[i][i] - col[j][j] - col[k][k] + 1.0f);
-
-            GfVec3f im;
-            im[i] = 0.5f * root;
-            root = 0.5f / root;
-            im[j] = root * (col[i][j] + col[j][i]);
-            im[k] = root * (col[i][k] + col[k][i]);
-            orient.SetImaginary(im);
-            orient.SetReal(root * (col[j][k] - col[k][j]));
-        }
-    }
-
-    void GetMotion(GfMatrix4d const& startTransform, GfMatrix4d const& endTransform,
-                   GfVec3f* linearMotion, GfVec3f* scaleMotion, GfVec3f* rotateAxis, float* rotateAngle) {
-        GfVec3f startScale, startTranslate; GfQuatf startRotation;
-        GfVec3f endScale, endTranslate; GfQuatf endRotation;
-        DecomposeTransform(startTransform, startScale, startRotation, startTranslate);
-        DecomposeTransform(endTransform, endScale, endRotation, endTranslate);
-
-        *linearMotion = endTranslate - startTranslate;
-        *scaleMotion = endScale - startScale;
-        *rotateAxis = GfVec3f(1, 0, 0);
-        *rotateAngle = 0.0f;
-
-        auto rotateMotion = endRotation * startRotation.GetInverse();
-        auto imLen = rotateMotion.GetImaginary().GetLength();
-        if (imLen > std::numeric_limits<float>::epsilon()) {
-            *rotateAxis = rotateMotion.GetImaginary() / imLen;
-            *rotateAngle = 2.0f * std::atan2(imLen, rotateMotion.GetReal());
-        }
-
-        if (*rotateAngle > M_PI) {
-            *rotateAngle -= 2 * M_PI;
-        }
-    }
-
-    void SetTransform(rpr::Shape* shape, size_t numSamples, float* timeSamples, GfMatrix4d* transformSamples) {
-        if (numSamples == 1) {
-            return SetTransform(shape, GfMatrix4f(transformSamples[0]));
-        }
-
-        // XXX (RPR): there is no way to sample all transforms via current RPR API
-        auto& startTransform = transformSamples[0];
-        auto& endTransform = transformSamples[numSamples - 1];
-
-        GfVec3f linearMotion, scaleMotion, rotateAxis;
-        float rotateAngle;
-        GetMotion(startTransform, endTransform, &linearMotion, &scaleMotion, &rotateAxis, &rotateAngle);
-
-        auto rprStartTransform = GfMatrix4f(startTransform);
-
-        LockGuard rprLock(m_rprContext->GetMutex());
-
-        RPR_ERROR_CHECK(shape->SetTransform(rprStartTransform.GetArray(), false), "Fail set shape transform");
-        RPR_ERROR_CHECK(shape->SetLinearMotion(linearMotion[0], linearMotion[1], linearMotion[2]), "Fail to set shape linear motion");
-        RPR_ERROR_CHECK(shape->SetScaleMotion(scaleMotion[0], scaleMotion[1], scaleMotion[2]), "Fail to set shape scale motion");
-        RPR_ERROR_CHECK(shape->SetAngularMotion(rotateAxis[0], rotateAxis[1], rotateAxis[2], rotateAngle), "Fail to set shape angular motion");
-        m_dirtyFlags |= ChangeTracker::DirtyScene;
     }
 
     RprUsdMaterial* CreateMaterial(HdSceneDelegate* sceneDelegate, HdMaterialNetworkMap const& materialNetwork) {
@@ -1405,7 +1158,7 @@ public:
         double exposure = std::max(shutterClose - shutterOpen, 0.0);
         RPR_ERROR_CHECK(m_camera->SetExposure(exposure), "Failed to set camera exposure");
 
-        auto setCameraLookAt = [this](GfMatrix4d const& viewMatrix, GfMatrix4d const& inverseViewMatrix) {
+        auto setCameraLookAt = [this](GfMatrix4f const& viewMatrix, GfMatrix4f const& inverseViewMatrix) {
             auto& iwvm = inverseViewMatrix;
             auto& wvm = viewMatrix;
             GfVec3f eye(iwvm[3][0], iwvm[3][1], iwvm[3][2]);
@@ -1419,18 +1172,18 @@ public:
             auto& transformSamples = m_hdCamera->GetTransformSamples();
 
             // XXX (RPR): there is no way to sample all transforms via current RPR API
-            auto& startTransform = transformSamples.values.front();
-            auto& endTransform = transformSamples.values.back();
+            auto startTransform = GfMatrix4f(transformSamples.values.front());
+            auto endTransform = GfMatrix4f(transformSamples.values.back());
 
             GfVec3f linearMotion, scaleMotion, rotateAxis;
             float rotateAngle;
-            GetMotion(startTransform, endTransform, &linearMotion, &scaleMotion, &rotateAxis, &rotateAngle);
+            RprUsdGetMotion(startTransform, endTransform, &linearMotion, &scaleMotion, &rotateAxis, &rotateAngle);
 
             setCameraLookAt(startTransform.GetInverse(), startTransform);
             RPR_ERROR_CHECK(m_camera->SetLinearMotion(linearMotion[0], linearMotion[1], linearMotion[2]), "Failed to set camera linear motion");
             RPR_ERROR_CHECK(m_camera->SetAngularMotion(rotateAxis[0], rotateAxis[1], rotateAxis[2], rotateAngle), "Failed to set camera angular motion");
         } else {
-            setCameraLookAt(m_hdCamera->GetViewMatrix(), m_hdCamera->GetViewInverseMatrix());
+            setCameraLookAt(GfMatrix4f(m_hdCamera->GetViewMatrix()), GfMatrix4f(m_hdCamera->GetViewInverseMatrix()));
             RPR_ERROR_CHECK(m_camera->SetLinearMotion(0.0f, 0.0f, 0.0f), "Failed to set camera linear motion");
             RPR_ERROR_CHECK(m_camera->SetAngularMotion(1.0f, 0.0f, 0.0f, 0.0f), "Failed to set camera angular motion");
         }
@@ -1798,6 +1551,8 @@ Don't show this message again?
         }
 
         RprUsdMaterialRegistry::GetInstance().CommitResources(m_imageCache.get());
+
+        m_mtContext.CommitResources(m_rprContext.get());
     }
 
     void Render(HdRprRenderThread* renderThread) {
@@ -1868,6 +1623,10 @@ Don't show this message again?
     void ExportRprSceneOnNextRender(const char* exportPath) {
         std::lock_guard<std::mutex> lock(m_rprSceneExportPathMutex);
         m_rprSceneExportPath = exportPath;
+    }
+
+    multithread_rpr_api::Context* GetMtContext() {
+        return &m_mtContext;
     }
 
 private:
@@ -2431,6 +2190,7 @@ private:
 
 private:
     HdRprDelegate* m_delegate;
+    multithread_rpr_api::Context m_mtContext;
 
     enum ChangeTracker : uint32_t {
         Clean = 0,
@@ -2504,18 +2264,13 @@ HdRprApi::~HdRprApi() {
     delete m_impl;
 }
 
-rpr::Shape* HdRprApi::CreateMesh(const VtVec3fArray& points, const VtIntArray& pointIndexes, const VtVec3fArray& normals, const VtIntArray& normalIndexes, const VtVec2fArray& uv, const VtIntArray& uvIndexes, const VtIntArray& vpf, TfToken const& polygonWinding) {
-    m_impl->InitIfNeeded();
-    return m_impl->CreateMesh(points, pointIndexes, normals, normalIndexes, uv, uvIndexes, vpf, polygonWinding);
+multithread_rpr_api::Context* HdRprApi::GetMtContext() {
+    return m_impl->GetMtContext();
 }
 
 rpr::Curve* HdRprApi::CreateCurve(VtVec3fArray const& points, VtIntArray const& indices, VtFloatArray const& radiuses, VtVec2fArray const& uvs, VtIntArray const& segmentPerCurve) {
     m_impl->InitIfNeeded();
     return m_impl->CreateCurve(points, indices, radiuses, uvs, segmentPerCurve);
-}
-
-rpr::Shape* HdRprApi::CreateMeshInstance(rpr::Shape* prototypeMesh) {
-    return m_impl->CreateMeshInstance(prototypeMesh);
 }
 
 HdRprApiEnvironmentLight* HdRprApi::CreateEnvironmentLight(GfVec3f color, float intensity) {
@@ -2534,10 +2289,6 @@ void HdRprApi::SetTransform(HdRprApiEnvironmentLight* envLight, GfMatrix4f const
 
 void HdRprApi::SetTransform(rpr::SceneObject* object, GfMatrix4f const& transform) {
     m_impl->SetTransform(object, transform);
-}
-
-void HdRprApi::SetTransform(rpr::Shape* shape, size_t numSamples, float* timeSamples, GfMatrix4d* transformSamples) {
-    m_impl->SetTransform(shape, numSamples, timeSamples, transformSamples);
 }
 
 void HdRprApi::SetTransform(HdRprApiVolume* volume, GfMatrix4f const& transform) {
@@ -2619,26 +2370,6 @@ RprUsdMaterial* HdRprApi::CreateDiffuseMaterial(GfVec3f const& color) {
     });
 }
 
-void HdRprApi::SetMeshRefineLevel(rpr::Shape* mesh, int level) {
-    m_impl->SetMeshRefineLevel(mesh, level);
-}
-
-void HdRprApi::SetMeshVertexInterpolationRule(rpr::Shape* mesh, TfToken boundaryInterpolation) {
-    m_impl->SetMeshVertexInterpolationRule(mesh, boundaryInterpolation);
-}
-
-void HdRprApi::SetMeshMaterial(rpr::Shape* mesh, RprUsdMaterial const* material, bool displacementEnabled) {
-    m_impl->SetMeshMaterial(mesh, material, displacementEnabled);
-}
-
-void HdRprApi::SetMeshVisibility(rpr::Shape* mesh, uint32_t visibilityMask) {
-    m_impl->SetMeshVisibility(mesh, visibilityMask);
-}
-
-void HdRprApi::SetMeshId(rpr::Shape* mesh, uint32_t id) {
-    m_impl->SetMeshId(mesh, id);
-}
-
 void HdRprApi::SetCurveMaterial(rpr::Curve* curve, RprUsdMaterial const* material) {
     m_impl->SetCurveMaterial(curve, material);
 }
@@ -2661,10 +2392,6 @@ void HdRprApi::Release(HdRprApiVolume* volume) {
 
 void HdRprApi::Release(rpr::Light* light) {
     m_impl->Release(light);
-}
-
-void HdRprApi::Release(rpr::Shape* shape) {
-    m_impl->Release(shape);
 }
 
 void HdRprApi::Release(rpr::Curve* curve) {

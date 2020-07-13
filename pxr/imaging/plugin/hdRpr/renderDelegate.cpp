@@ -247,7 +247,7 @@ HdRprim* HdRprDelegate::CreateRprim(TfToken const& typeId,
     } else if (typeId == HdPrimTypeTokens->basisCurves) {
         return new HdRprBasisCurves(rprimId, instancerId);
     } else if (typeId == HdPrimTypeTokens->points) {
-        return new HdRprPoints(rprimId, instancerId);
+        //return new HdRprPoints(rprimId, instancerId);
     }
 #ifdef USE_VOLUME
     else if (typeId == HdPrimTypeTokens->volume) {

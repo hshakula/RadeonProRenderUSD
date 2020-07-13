@@ -138,7 +138,7 @@ pxr_plugin(hdRpr
         camera
         debugCodes
         primvarUtil
-        points
+        # points
         
         ${OptClass}
 
@@ -170,6 +170,7 @@ endif()
 
 add_subdirectory(rifcpp)
 add_subdirectory(houdini)
+add_subdirectory(multithreadRprApi)
 if(NOT HoudiniUSD_FOUND)
     add_subdirectory(usdviewMenu)
 endif()

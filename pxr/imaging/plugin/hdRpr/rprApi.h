@@ -16,6 +16,8 @@ limitations under the License.
 
 #include "api.h"
 
+#include "multithreadRprApi/context.h"
+
 #include "pxr/base/gf/vec2i.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/array.h"
@@ -70,6 +72,8 @@ public:
     HdRprApi(HdRprDelegate* delegate);
     ~HdRprApi();
 
+    multithread_rpr_api::Context* GetMtContext();
+
     HdRprApiEnvironmentLight* CreateEnvironmentLight(const std::string& pathTotexture, float intensity);
     HdRprApiEnvironmentLight* CreateEnvironmentLight(GfVec3f color, float intensity);
     void SetTransform(HdRprApiEnvironmentLight* envLight, GfMatrix4f const& transform);
@@ -110,22 +114,12 @@ public:
     RprUsdMaterial* CreateDiffuseMaterial(GfVec3f const& color);
     void Release(RprUsdMaterial* material);
 
-    rpr::Shape* CreateMesh(const VtVec3fArray& points, const VtIntArray& pointIndexes, const VtVec3fArray& normals, const VtIntArray& normalIndexes, const VtVec2fArray& uv, const VtIntArray& uvIndexes, const VtIntArray& vpf, TfToken const& polygonWinding);
-    rpr::Shape* CreateMeshInstance(rpr::Shape* prototypeMesh);
-    void SetMeshRefineLevel(rpr::Shape* mesh, int level);
-    void SetMeshVertexInterpolationRule(rpr::Shape* mesh, TfToken boundaryInterpolation);
-    void SetMeshMaterial(rpr::Shape* mesh, RprUsdMaterial const* material, bool displacementEnabled);
-    void SetMeshVisibility(rpr::Shape* mesh, uint32_t visibilityMask);
-    void SetMeshId(rpr::Shape* mesh, uint32_t id);
-    void Release(rpr::Shape* shape);
-
     rpr::Curve* CreateCurve(VtVec3fArray const& points, VtIntArray const& indices, VtFloatArray const& radiuses, VtVec2fArray const& uvs, VtIntArray const& segmentPerCurve);
     void SetCurveMaterial(rpr::Curve* curve, RprUsdMaterial const* material);
     void SetCurveVisibility(rpr::Curve* curve, uint32_t visibilityMask);
     void Release(rpr::Curve* curve);
 
     void SetTransform(rpr::SceneObject* object, GfMatrix4f const& transform);
-    void SetTransform(rpr::Shape* shape, size_t numSamples, float* timeSamples, GfMatrix4d* transformSamples);
 
     GfMatrix4d GetCameraViewMatrix() const;
     const GfMatrix4d& GetCameraProjectionMatrix() const;

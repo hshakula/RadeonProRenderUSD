@@ -21,9 +21,11 @@ limitations under the License.
 #include "boostIncludePath.h"
 #include BOOST_INCLUDE_PATH(variant.hpp)
 
-namespace rpr { class Shape; class PointLight; class SpotLight; class IESLight; }
+namespace rpr { class PointLight; class SpotLight; class IESLight; }
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+namespace multithread_rpr_api { class Mesh; }
 
 class HdRprApi;
 class RprUsdMaterial;
@@ -49,10 +51,10 @@ private:
     void CreateIESLight(HdRprApi* rprApi, std::string const& path);
 
     void CreateAreaLightMesh(HdRprApi* rprApi, HdSceneDelegate* sceneDelegate);
-    rpr::Shape* CreateDiskLightMesh(HdRprApi* rprApi);
-    rpr::Shape* CreateRectLightMesh(HdRprApi* rprApi, bool applyTransform = false, GfMatrix4f const& transform = GfMatrix4f(1.0f));
-    rpr::Shape* CreateSphereLightMesh(HdRprApi* rprApi);
-    rpr::Shape* CreateCylinderLightMesh(HdRprApi* rprApi);
+    multithread_rpr_api::Mesh* CreateDiskLightMesh(HdRprApi* rprApi);
+    multithread_rpr_api::Mesh* CreateRectLightMesh(HdRprApi* rprApi, bool applyTransform = false, GfMatrix4f const& transform = GfMatrix4f(1.0f));
+    multithread_rpr_api::Mesh* CreateSphereLightMesh(HdRprApi* rprApi);
+    multithread_rpr_api::Mesh* CreateCylinderLightMesh(HdRprApi* rprApi);
 
     struct AreaLight;
     void SyncAreaLightGeomParams(AreaLight* light, HdSceneDelegate* sceneDelegate, float* intensity);
@@ -64,7 +66,7 @@ private:
 
     struct AreaLight {
         RprUsdMaterial* material = nullptr;
-        std::vector<rpr::Shape*> meshes;
+        std::vector<multithread_rpr_api::Mesh*> meshes;
         GfMatrix4f localTransform;
     };
 
