@@ -33,6 +33,8 @@ limitations under the License.
 #include <vector>
 #include <string>
 
+#include "rpr/contextMetadata.h"
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdRprDelegate;
@@ -152,6 +154,10 @@ public:
 
     static std::string GetAppDataPath();
     static std::string GetCachePath();
+
+    rpr::PluginType GetActivePluginType() const;
+    rpr::FrameBuffer* GetColorFramebuffer();
+    void SetInteropInfo(void* interopInfo, std::condition_variable* presentedConditionVariable, bool* presentedCondition);
 
 private:
     HdRprApiImpl* m_impl = nullptr;
