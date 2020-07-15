@@ -14,6 +14,8 @@ limitations under the License.
 #ifndef HDRPR_MESH_H
 #define HDRPR_MESH_H
 
+#include "rprApiSyncPrim.h"
+
 #include "pxr/imaging/hd/mesh.h"
 #include "pxr/imaging/hd/vertexAdjacency.h"
 #include "pxr/base/vt/array.h"
@@ -25,9 +27,10 @@ namespace rpr { class Shape; }
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdRprApi;
+class HdRprMaterial;
 class RprUsdMaterial;
 
-class HdRprMesh final : public HdMesh {
+class HdRprMesh final : public HdMesh, public HdRprApiSyncPrim {
 public:
     HF_MALLOC_TAG_NEW("new HdRprMesh");
 
@@ -43,6 +46,9 @@ public:
 
     HdDirtyBits GetInitialDirtyBitsMask() const override;
 
+    void Commit(rpr::Context* rprContext, rpr::Scene* rprScene,
+                RprUsdContextMetadata const& rprContextMetadata) override;
+
 protected:
     HdDirtyBits _PropagateDirtyBits(HdDirtyBits bits) const override;
 
@@ -56,23 +62,21 @@ private:
                         VtArray<T>& out_data,
                         VtIntArray& out_indices);
 
-    RprUsdMaterial const* GetFallbackMaterial(HdSceneDelegate* sceneDelegate, HdRprApi* rprApi, HdDirtyBits dirtyBits);
+    void InitFallbackMaterial(HdSceneDelegate* sceneDelegate, HdRprApi* rprApi);
+
+    uint32_t GetVisibilityMask() const;
 
 private:
-    std::vector<rpr::Shape*> m_rprMeshes;
-    std::vector<std::vector<rpr::Shape*>> m_rprMeshInstances;
-    RprUsdMaterial* m_fallbackMaterial = nullptr;
+    // Pulled data
+    std::vector<HdRprMaterial const*> m_materials;
 
-    SdfPath m_cachedMaterialId;
-    static constexpr int kDefaultNumTimeSamples = 2;
-    HdTimeSampleArray<GfMatrix4d, kDefaultNumTimeSamples> m_transformSamples;
+    HdTimeSampleArray<GfMatrix4d, 2> m_transformSamples;
+
+    TfSmallVector<float, 2> m_instanceTransformTimes;
+    std::vector<TfSmallVector<GfMatrix4d, 2>> m_instanceTransforms;
 
     HdMeshTopology m_topology;
-    HdGeomSubsets m_geomSubsets;
     VtVec3fArray m_points;
-    VtIntArray m_faceVertexCounts;
-    VtIntArray m_faceVertexIndices;
-    bool m_enableSubdiv = false;
 
     Hd_VertexAdjacency m_adjacency;
     bool m_adjacencyValid = false;
@@ -81,7 +85,6 @@ private:
     VtIntArray m_normalIndices;
     bool m_normalsValid = false;
     bool m_authoredNormals = false;
-    bool m_smoothNormals = false;
 
     VtVec2fArray m_uvs;
     VtIntArray m_uvIndices;
@@ -89,7 +92,28 @@ private:
     HdDisplayStyle m_displayStyle;
     int m_refineLevel = 0;
 
+    TfToken m_vertexInterpolationRule;
+
     uint32_t m_visibilityMask;
+    uint32_t m_commitDirtyBits;
+
+    enum CustomDirtyBits {
+        kDirtyVisibilityMask = HdChangeTracker::CustomBitsBegin << 0,
+        kDirtyRefineLevel = HdChangeTracker::CustomBitsBegin << 1,
+        kDirtyMesh = HdChangeTracker::CustomBitsBegin << 2,
+    };
+
+    // Custom data
+    VtIntArray m_sharedFaceVaryingIndices;
+
+    VtIntArray m_convertedFaceCounts;
+    VtIntArray m_convertedFaceIndices;
+
+    // Commit data
+    std::vector<rpr::Shape*> m_rprMeshes;
+    std::vector<std::vector<rpr::Shape*>> m_rprMeshInstances;
+
+    RprUsdMaterial* m_fallbackMaterial = nullptr;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

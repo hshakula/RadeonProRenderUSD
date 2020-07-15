@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "rprApi.h"
 #include "rprApiAov.h"
+#include "rprApiSyncPrim.h"
 #include "aovDescriptor.h"
 
 #include "rifcpp/rifFilter.h"
@@ -241,6 +242,15 @@ public:
         UpdateRestartRequiredMessageStatus();
 
         RprUsdProfiler::RecordTimePoint(RprUsdProfiler::kContextCreationEnd);
+    }
+
+    void EnqueuePrimForCommit(HdRprApiSyncPrim* prim) {
+        if (!m_rprContext) {
+            return;
+        }
+
+        LockGuard lock(m_rprContext->GetMutex());
+        m_syncPrims.insert(prim);
     }
 
     rpr::Shape* CreateMesh(const VtVec3fArray& points, const VtIntArray& pointIndexes,
@@ -1798,6 +1808,11 @@ Don't show this message again?
         }
 
         RprUsdMaterialRegistry::GetInstance().CommitResources(m_imageCache.get());
+
+        for (auto syncPrim : m_syncPrims) {
+            syncPrim->Commit(m_rprContext.get(), m_scene.get(), m_rprContextMetadata);
+        }
+        m_syncPrims.clear();
     }
 
     void Render(HdRprRenderThread* renderThread) {
@@ -1836,7 +1851,8 @@ Don't show this message again?
 
     bool IsChanged() const {
         if (m_dirtyFlags != ChangeTracker::Clean ||
-            IsCameraChanged()) {
+            IsCameraChanged() ||
+            !m_syncPrims.empty()) {
             return true;
         }
 
@@ -1863,6 +1879,10 @@ Don't show this message again?
 
     int GetCurrentRenderQuality() const {
         return m_currentRenderQuality;
+    }
+
+    RprUsdContextMetadata const& GetContextMetadata() const {
+        return m_rprContextMetadata;
     }
 
     void ExportRprSceneOnNextRender(const char* exportPath) {
@@ -2494,6 +2514,8 @@ private:
 
     std::mutex m_rprSceneExportPathMutex;
     std::string m_rprSceneExportPath;
+
+    std::unordered_set<HdRprApiSyncPrim*> m_syncPrims;
 };
 
 HdRprApi::HdRprApi(HdRprDelegate* delegate) : m_impl(new HdRprApiImpl(delegate)) {
@@ -2502,6 +2524,10 @@ HdRprApi::HdRprApi(HdRprDelegate* delegate) : m_impl(new HdRprApiImpl(delegate))
 
 HdRprApi::~HdRprApi() {
     delete m_impl;
+}
+
+void HdRprApi::EnqueuePrimForCommit(HdRprApiSyncPrim* prim) const {
+    m_impl->EnqueuePrimForCommit(prim);
 }
 
 rpr::Shape* HdRprApi::CreateMesh(const VtVec3fArray& points, const VtIntArray& pointIndexes, const VtVec3fArray& normals, const VtIntArray& normalIndexes, const VtVec2fArray& uv, const VtIntArray& uvIndexes, const VtIntArray& vpf, TfToken const& polygonWinding) {
@@ -2739,6 +2765,10 @@ bool HdRprApi::IsArbitraryShapedLightSupported() const {
 
 int HdRprApi::GetCurrentRenderQuality() const {
     return m_impl->GetCurrentRenderQuality();
+}
+
+RprUsdContextMetadata const& HdRprApi::GetContextMetadata() const {
+    return m_impl->GetContextMetadata();
 }
 
 void HdRprApi::ExportRprSceneOnNextRender(const char* exportPath) {

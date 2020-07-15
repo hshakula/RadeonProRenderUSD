@@ -16,9 +16,11 @@ limitations under the License.
 #include "renderParam.h"
 #include "material.h"
 #include "primvarUtil.h"
+#include "motion.h"
 #include "rprApi.h"
 
 #include "pxr/imaging/rprUsd/material.h"
+#include "pxr/imaging/rprUsd/error.h"
 
 #include "pxr/imaging/pxOsd/tokens.h"
 #include "pxr/imaging/pxOsd/subdivTags.h"
@@ -59,7 +61,6 @@ HdDirtyBits HdRprMesh::GetInitialDirtyBitsMask() const {
         | HdChangeTracker::DirtyVisibility
         | HdChangeTracker::DirtyInstancer
         | HdChangeTracker::DirtyInstanceIndex
-        | HdChangeTracker::DirtyDoubleSided
         ;
 
     return (HdDirtyBits)mask;
@@ -89,10 +90,13 @@ bool HdRprMesh::GetPrimvarData(TfToken const& name,
                 if (value.IsHolding<VtArray<T>>()) {
                     out_data = value.UncheckedGet<VtArray<T>>();
                     if (primvarDescsEntry.first == HdInterpolationFaceVarying) {
-                        out_indices.reserve(m_faceVertexIndices.size());
-                        for (int i = 0; i < m_faceVertexIndices.size(); ++i) {
-                            out_indices.push_back(i);
+                        if (m_sharedFaceVaryingIndices.empty()) {
+                            m_sharedFaceVaryingIndices.reserve(m_topology.GetFaceVertexIndices().size());
+                            for (int i = 0; i < m_topology.GetFaceVertexIndices().size(); ++i) {
+                                m_sharedFaceVaryingIndices.push_back(i);
+                            }
                         }
+                        out_indices = m_sharedFaceVaryingIndices;
                     }
                     return true;
                 }
@@ -106,12 +110,7 @@ bool HdRprMesh::GetPrimvarData(TfToken const& name,
 template bool HdRprMesh::GetPrimvarData<GfVec2f>(TfToken const&, HdSceneDelegate*, std::map<HdInterpolation, HdPrimvarDescriptorVector>, VtArray<GfVec2f>&, VtIntArray&);
 template bool HdRprMesh::GetPrimvarData<GfVec3f>(TfToken const&, HdSceneDelegate*, std::map<HdInterpolation, HdPrimvarDescriptorVector>, VtArray<GfVec3f>&, VtIntArray&);
 
-RprUsdMaterial const* HdRprMesh::GetFallbackMaterial(HdSceneDelegate* sceneDelegate, HdRprApi* rprApi, HdDirtyBits dirtyBits) {
-    if (m_fallbackMaterial && (dirtyBits & HdChangeTracker::DirtyPrimvar)) {
-        rprApi->Release(m_fallbackMaterial);
-        m_fallbackMaterial = nullptr;
-    }
-
+void HdRprMesh::InitFallbackMaterial(HdSceneDelegate* sceneDelegate, HdRprApi* rprApi) {
     if (!m_fallbackMaterial) {
         // XXX: Currently, displayColor is used as one color for whole mesh,
         // but it should be used as attribute per vertex/face.
@@ -135,8 +134,168 @@ RprUsdMaterial const* HdRprMesh::GetFallbackMaterial(HdSceneDelegate* sceneDeleg
 
         m_fallbackMaterial = rprApi->CreateDiffuseMaterial(color);
     }
+}
 
-    return m_fallbackMaterial;
+void FlipWinding(VtIntArray const& vpf, VtIntArray* indices) {
+    size_t indicesOffset = 0;
+    for (int iFace = 0; iFace < vpf.size(); ++iFace) {
+        auto faceIndices = indices->data() + indicesOffset;
+        std::swap(faceIndices[0], faceIndices[2]);
+        indicesOffset += vpf[iFace];
+    }
+}
+
+void SplitPolygons(VtIntArray const& indices, VtIntArray const& vpf, VtIntArray* out_indices, VtIntArray* out_vpf) {
+    out_indices->clear();
+    out_vpf->clear();
+
+    out_indices->reserve(indices.size());
+    out_vpf->reserve(vpf.size());
+
+    VtIntArray::const_iterator idxIt = indices.begin();
+    for (int vCount : vpf) {
+        if (vCount == 3 || vCount == 4) {
+            for (int i = 0; i < vCount; ++i) {
+                out_indices->push_back(*idxIt);
+                ++idxIt;
+            }
+            out_vpf->push_back(vCount);
+        } else {
+            const int commonVertex = *idxIt;
+            constexpr int triangleVertexCount = 3;
+            for (int i = 1; i < vCount - 1; ++i) {
+                out_indices->push_back(commonVertex);
+                out_indices->push_back(*(idxIt + i + 0));
+                out_indices->push_back(*(idxIt + i + 1));
+                out_vpf->push_back(triangleVertexCount);
+            }
+            idxIt += vCount;
+        }
+    }
+}
+
+void SplitPolygons(VtIntArray const& indices, VtIntArray const& vpf, VtIntArray* out_indices) {
+    out_indices->clear();
+    out_indices->reserve(indices.size());
+
+    VtIntArray::const_iterator idxIt = indices.begin();
+    for (int vCount : vpf) {
+        if (vCount == 3 || vCount == 4) {
+            for (int i = 0; i < vCount; ++i) {
+                out_indices->push_back(*idxIt);
+                ++idxIt;
+            }
+        } else {
+            const int commonVertex = *idxIt;
+            for (int i = 1; i < vCount - 1; ++i) {
+                out_indices->push_back(commonVertex);
+                out_indices->push_back(*(idxIt + i + 0));
+                out_indices->push_back(*(idxIt + i + 1));
+            }
+            idxIt += vCount;
+        }
+    }
+}
+
+void PreprocessMeshData(
+    RprUsdContextMetadata const& contextMetadata,
+    TfToken const& windingOrder,
+    VtVec3fArray const& points,
+    VtIntArray const& vpf,
+    VtIntArray const& pointIndices,
+    VtIntArray* out_vpf,
+    VtIntArray* out_pointIndices,
+    VtVec3fArray* inout_normals,
+    VtIntArray* inout_normalIndices,
+    VtVec2fArray* inout_uvs,
+    VtIntArray* inout_uvIndices) {
+
+    bool splittingRequired = false;
+    for (int numVertices : vpf) {
+        if (numVertices > 4) {
+            splittingRequired = true;
+            break;
+        }
+    }
+
+    out_vpf->clear();
+    out_pointIndices->clear();
+
+    if (splittingRequired) {
+        SplitPolygons(pointIndices, vpf, out_pointIndices, out_vpf);
+        if (windingOrder == HdTokens->leftHanded) {
+            FlipWinding(*out_vpf, out_pointIndices);
+        }
+    } else {
+        if (windingOrder == HdTokens->leftHanded) {
+            *out_pointIndices = pointIndices;
+            FlipWinding(vpf, out_pointIndices);
+        }
+    }
+
+    auto& validVpf = out_vpf->empty() ? vpf : *out_vpf;
+    auto& validPointIndices = out_pointIndices->empty() ? pointIndices : *out_pointIndices;
+
+    auto preprocessPrimvarIndices = [splittingRequired, &windingOrder, &vpf, &out_vpf, &validPointIndices](VtIntArray* indices) {
+        if (indices->empty()) {
+            *indices = validPointIndices;
+        } else {
+            if (splittingRequired) {
+                VtIntArray newIndices;
+                SplitPolygons(*indices, vpf, &newIndices);
+                if (windingOrder == HdTokens->leftHanded) {
+                    FlipWinding(*out_vpf, &newIndices);
+                }
+                std::swap(*indices, newIndices);
+            } else {
+                if (windingOrder == HdTokens->leftHanded) {
+                    FlipWinding(vpf, indices);
+                }
+            }
+        }
+    };
+
+    if (inout_normals->empty()) {
+        if (contextMetadata.pluginType == kPluginHybrid) {
+            // XXX (Hybrid): crashing without normals, generate flat normals
+            inout_normals->reserve(validVpf.size());
+            inout_normalIndices->clear();
+            inout_normalIndices->reserve(validPointIndices.size());
+
+            size_t indicesOffset = 0u;
+            for (auto numVerticesPerFace : validVpf) {
+                for (int i = 0; i < numVerticesPerFace; ++i) {
+                    inout_normalIndices->push_back(inout_normals->size());
+                }
+
+                auto indices = &validPointIndices[indicesOffset];
+                indicesOffset += numVerticesPerFace;
+
+                auto p0 = points[indices[0]];
+                auto p1 = points[indices[1]];
+                auto p2 = points[indices[2]];
+
+                auto e0 = p0 - p1;
+                auto e1 = p2 - p1;
+
+                auto normal = GfCross(e1, e0);
+                GfNormalize(&normal);
+                inout_normals->push_back(normal);
+            }
+        }
+    } else {
+        preprocessPrimvarIndices(inout_normalIndices);
+    }
+
+    if (inout_uvs->empty()) {
+        if (contextMetadata.pluginType == kPluginHybrid) {
+            // XXX (Hybrid): crashing without uvs, generate zero uvs
+            *inout_uvIndices = validPointIndices;
+            *inout_uvs = VtVec2fArray(points.size(), GfVec2f(0.0f));
+        }
+    } else {
+        preprocessPrimvarIndices(inout_uvIndices);
+    }
 }
 
 void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
@@ -146,10 +305,11 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
 
+    SdfPath const& id = GetId();
+
     auto rprRenderParam = static_cast<HdRprRenderParam*>(renderParam);
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();
 
-    SdfPath const& id = GetId();
 
     ////////////////////////////////////////////////////////////////////////
     // 1. Pull scene data.
@@ -182,6 +342,7 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         VtValue pointsValue = sceneDelegate->Get(id, HdTokens->points);
         m_points = pointsValue.Get<VtVec3fArray>();
+
         m_normalsValid = false;
 
         newMesh = true;
@@ -189,16 +350,14 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
 
     if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
         m_topology = GetMeshTopology(sceneDelegate);
-        m_faceVertexCounts = m_topology.GetFaceVertexCounts();
-        m_faceVertexIndices = m_topology.GetFaceVertexIndices();
 
         m_adjacencyValid = false;
         m_normalsValid = false;
 
-        m_enableSubdiv = m_topology.GetScheme() == PxOsdOpenSubdivTokens->catmullClark;
-
         newMesh = true;
     }
+
+    auto& geomSubsets = m_topology.GetGeomSubsets();
 
     std::map<HdInterpolation, HdPrimvarDescriptorVector> primvarDescsPerInterpolation = {
         {HdInterpolationFaceVarying, sceneDelegate->GetPrimvarDescriptors(id, HdInterpolationFaceVarying)},
@@ -212,24 +371,64 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         newMesh = true;
     }
 
+    bool fallbackMaterialRequired = m_fallbackMaterial;
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
-        m_cachedMaterialId = sceneDelegate->GetMaterialId(id);
+        m_materials.clear();
+
+        auto& renderIndex = sceneDelegate->GetRenderIndex();
+        auto getHdRprMaterial = [&renderIndex, &fallbackMaterialRequired](SdfPath const& materialId) {
+            auto hdMaterial = renderIndex.GetSprim(HdPrimTypeTokens->material, materialId);
+            auto hdRprMaterial = static_cast<const HdRprMaterial*>(hdMaterial);
+            if (!hdRprMaterial && !hdRprMaterial->GetRprMaterialObject()) {
+                fallbackMaterialRequired = true;
+            }
+            return hdRprMaterial;
+        };
+
+        if (geomSubsets.empty()) {
+            m_materials.push_back(getHdRprMaterial(sceneDelegate->GetMaterialId(id)));
+        } else {
+            m_materials.reserve(geomSubsets.size());
+            for (auto& subset : geomSubsets) {
+                if (subset.type != HdGeomSubset::TypeFaceSet) continue;
+
+                m_materials.push_back(getHdRprMaterial(subset.materialId));
+            }
+            m_materials.shrink_to_fit();
+        }
     }
 
-    auto material = static_cast<const HdRprMaterial*>(sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, m_cachedMaterialId));
-    if (material && material->GetRprMaterialObject()) {
-        auto rprMaterial = material->GetRprMaterialObject();
+    if ((*dirtyBits & HdChangeTracker::DirtyMaterialId) ||
+        (*dirtyBits & HdChangeTracker::DirtyPrimvar)) {
+        rprApi->Release(m_fallbackMaterial);
+        m_fallbackMaterial = nullptr;
 
-        auto uvPrimvarName = &rprMaterial->GetUvPrimvarName();
-        if (uvPrimvarName->IsEmpty()) {
-            static TfToken st("st", TfToken::Immortal);
-            uvPrimvarName = &st;
+        if (fallbackMaterialRequired) {
+            InitFallbackMaterial(sceneDelegate, rprApi);
         }
 
-        if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, *uvPrimvarName)) {
-            GetPrimvarData(*uvPrimvarName, sceneDelegate, primvarDescsPerInterpolation, m_uvs, m_uvIndices);
+        if (!m_materials.empty() && m_materials[0] &&
+            m_materials[0]->GetRprMaterialObject()) {
+            auto rprMaterial = m_materials[0]->GetRprMaterialObject();
 
-            newMesh = true;
+            auto uvPrimvarName = &rprMaterial->GetUvPrimvarName();
+            if (uvPrimvarName->IsEmpty()) {
+                static TfToken st("st", TfToken::Immortal);
+                uvPrimvarName = &st;
+            }
+
+            if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, *uvPrimvarName)) {
+                GetPrimvarData(*uvPrimvarName, sceneDelegate, primvarDescsPerInterpolation, m_uvs, m_uvIndices);
+
+                newMesh = true;
+            }
+        } else {
+            if (!m_uvs.empty()) {
+                m_uvs.clear();
+                m_uvIndices.clear();
+
+                newMesh = true;
+            }
         }
     }
 
@@ -240,37 +439,39 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     ////////////////////////////////////////////////////////////////////////
     // 2. Resolve drawstyles
 
-    bool isRefineLevelDirty = false;
+    HdDirtyBits customDirtyBits = 0;
+
+    int newRefineLevel = -1;
     if (*dirtyBits & HdChangeTracker::DirtyDisplayStyle) {
         m_displayStyle = sceneDelegate->GetDisplayStyle(id);
-        if (m_refineLevel != m_displayStyle.refineLevel) {
-            isRefineLevelDirty = true;
-            m_refineLevel = m_displayStyle.refineLevel;
-        }
+        newRefineLevel = m_displayStyle.refineLevel;
     }
 
-    bool isVisibilityMaskDirty = false;
     if (*dirtyBits & HdChangeTracker::DirtyPrimvar) {
         HdRprGeometrySettings geomSettings = {};
         geomSettings.visibilityMask = kVisibleAll;
         HdRprParseGeometrySettings(sceneDelegate, id, primvarDescsPerInterpolation.at(HdInterpolationConstant), &geomSettings);
 
-        if (m_refineLevel != geomSettings.subdivisionLevel) {
-            m_refineLevel = geomSettings.subdivisionLevel;
-            isRefineLevelDirty = true;
-        }
+        newRefineLevel = geomSettings.subdivisionLevel;
 
         if (m_visibilityMask != geomSettings.visibilityMask) {
             m_visibilityMask = geomSettings.visibilityMask;
-            isVisibilityMaskDirty = true;
+            customDirtyBits |= kDirtyVisibilityMask;
         }
     }
 
-    m_smoothNormals = m_displayStyle.flatShadingEnabled;
-    // Don't compute smooth normals on a refined mesh. They are implicitly smooth.
-    m_smoothNormals = m_smoothNormals && !(m_enableSubdiv && m_refineLevel > 0);
+    if (m_refineLevel != newRefineLevel) {
+        m_refineLevel = newRefineLevel;
+        customDirtyBits |= kDirtyRefineLevel;
+    }
 
-    if (!m_authoredNormals && m_smoothNormals) {
+    bool enableSubdiv = m_topology.GetScheme() == PxOsdOpenSubdivTokens->catmullClark;
+
+    bool smoothNormals = m_displayStyle.flatShadingEnabled;
+    // Don't compute smooth normals on a refined mesh. They are implicitly smooth.
+    smoothNormals = smoothNormals && !(enableSubdiv && m_refineLevel > 0);
+
+    if (!m_authoredNormals && smoothNormals) {
         if (!m_adjacencyValid) {
             m_adjacency.BuildAdjacencyTable(&m_topology);
             m_adjacencyValid = true;
@@ -285,321 +486,86 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
         }
     }
 
-    bool updateTransform = newMesh;
     if (*dirtyBits & HdChangeTracker::DirtyTransform) {
         sceneDelegate->SampleTransform(id, &m_transformSamples);
-        updateTransform = true;
+    }
+
+    if (*dirtyBits & HdChangeTracker::DirtySubdivTags) {
+        PxOsdSubdivTags subdivTags = sceneDelegate->GetSubdivTags(id);
+        auto vertexInterpolationRule = subdivTags.GetVertexInterpolationRule();
+
+        if (m_vertexInterpolationRule != vertexInterpolationRule) {
+            m_vertexInterpolationRule = vertexInterpolationRule;
+        } else {
+            *dirtyBits &= ~HdChangeTracker::DirtySubdivTags;
+        }
+    }
+
+    if (*dirtyBits & HdChangeTracker::DirtyInstancer) {
+        m_instanceTransforms.clear();
+
+        if (auto instancer = static_cast<HdRprInstancer*>(sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()))) {
+            auto instanceTransforms = instancer->SampleInstanceTransforms(id);
+            auto newNumInstances = (instanceTransforms.count > 0) ? instanceTransforms.values[0].size() : 0;
+            if (newNumInstances) {
+                m_instanceTransforms.reserve(newNumInstances);
+
+                for (size_t i = 0; i < newNumInstances; ++i) {
+                    // Convert transform
+                    // Apply prototype transform (m_transformSamples) to all the instances
+                    m_instanceTransforms.emplace_back(instanceTransforms.count);
+                    auto& instanceTransform = m_instanceTransforms.back();
+
+                    if (m_transformSamples.count == 0 ||
+                        (m_transformSamples.count == 1 && (m_transformSamples.values[0] == GfMatrix4d(1)))) {
+                        for (size_t j = 0; j < instanceTransforms.count; ++j) {
+                            instanceTransform[j] = instanceTransforms.values[j][i];
+                        }
+                    } else {
+                        for (size_t j = 0; j < instanceTransforms.count; ++j) {
+                            GfMatrix4d xf_j = m_transformSamples.Resample(instanceTransforms.times[j]);
+                            instanceTransform[j] = xf_j * instanceTransforms.values[j][i];
+                        }
+                    }
+                }
+
+                std::swap(m_instanceTransformTimes, instanceTransforms.times);
+            } else {
+                m_instanceTransforms.clear();
+                m_instanceTransformTimes.clear();
+            }
+        } else {
+            for (auto instances : m_rprMeshInstances) {
+                for (auto instance : instances) {
+                    rprApi->Release(instance);
+                }
+            }
+            m_rprMeshInstances.clear();
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////
-    // 3. Create RPR meshes
+    // 3. Reset RPR meshes if needed
 
     if (newMesh) {
-        for (auto mesh : m_rprMeshes) {
-            rprApi->Release(mesh);
-        }
-        for (auto instances : m_rprMeshInstances) {
-            for (auto instance : instances) {
-                rprApi->Release(instance);
-            }
-        }
-        m_rprMeshInstances.clear();
-        m_rprMeshes.clear();
+        customDirtyBits |= kDirtyMesh;
 
-        m_geomSubsets = m_topology.GetGeomSubsets();
-        if (m_geomSubsets.empty()) {
-            if (auto rprMesh = rprApi->CreateMesh(m_points, m_faceVertexIndices, m_normals, m_normalIndices, m_uvs, m_uvIndices, m_faceVertexCounts, m_topology.GetOrientation())) {
-                rprApi->SetMeshId(rprMesh, GetPrimId());
-                m_rprMeshes.push_back(rprMesh);
-            }
+        if (geomSubsets.empty()) {
+            PreprocessMeshData(rprApi->GetContextMetadata(), m_topology.GetOrientation(), m_points, m_topology.GetFaceVertexCounts(), m_topology.GetFaceVertexIndices(),
+                &m_convertedFaceCounts, &m_convertedFaceIndices, &m_normals, &m_normalIndices, &m_uvs, &m_uvIndices);
         } else {
-            auto numFaces = m_faceVertexCounts.size();
-            std::vector<bool> faceIsUnused(numFaces, true);
-            size_t numUnusedFaces = faceIsUnused.size();
-            for (auto const& subset : m_geomSubsets) {
-                for (int index : subset.indices) {
-                    if (TF_VERIFY(index < numFaces) && faceIsUnused[index]) {
-                        faceIsUnused[index] = false;
-                        numUnusedFaces--;
-                    }
-                }
-            }
-            // If we found any unused faces, build a final subset with those faces.
-            // Use the material bound to the parent mesh.
-            if (numUnusedFaces) {
-                m_geomSubsets.push_back(HdGeomSubset());
-                HdGeomSubset& unusedSubset = m_geomSubsets.back();
-                unusedSubset.type = HdGeomSubset::TypeFaceSet;
-                unusedSubset.id = id;
-                unusedSubset.materialId = m_cachedMaterialId;
-                unusedSubset.indices.resize(numUnusedFaces);
-                size_t count = 0;
-                for (size_t i = 0; i < faceIsUnused.size() && count < numUnusedFaces; ++i) {
-                    if (faceIsUnused[i]) {
-                        unusedSubset.indices[count] = i;
-                        count++;
-                    }
-                }
-            }
-
-            // GeomSubset may reference face subset in any given order so we need to be able to
-            //   randomly lookup face indexes but each face may be of an arbitrary number of vertices
-            std::vector<int> indexesOffsetPrefixSum;
-            indexesOffsetPrefixSum.reserve(m_faceVertexCounts.size());
-            int offset = 0;
-            for (auto numVerticesInFace : m_faceVertexCounts) {
-                indexesOffsetPrefixSum.push_back(offset);
-                offset += numVerticesInFace;
-            }
-
-            VtIntArray vertexIndexRemapping;
-            VtIntArray normalIndexRemapping;
-            VtIntArray uvIndexRemapping;
-
-            for (auto it = m_geomSubsets.begin(); it != m_geomSubsets.end();) {
-                auto const& subset = *it;
-                if (subset.type != HdGeomSubset::TypeFaceSet) {
-                    TF_RUNTIME_ERROR("Unknown HdGeomSubset Type");
-                    it = m_geomSubsets.erase(it);
-                    continue;
-                }
-
-                VtVec3fArray subsetPoints;
-                VtVec3fArray subsetNormals;
-                VtVec2fArray subsetUv;
-                VtIntArray subsetNormalIndices;
-                VtIntArray subsetUvIndices;
-                VtIntArray subsetIndexes;
-                VtIntArray subsetVertexPerFace;
-                subsetVertexPerFace.reserve(subset.indices.size());
-
-                vertexIndexRemapping.reserve(m_points.size());
-                std::fill(vertexIndexRemapping.begin(), vertexIndexRemapping.begin() + m_points.size(), -1);
-                if (!m_normalIndices.empty()) {
-                    normalIndexRemapping.reserve(m_normals.size());
-                    std::fill(normalIndexRemapping.begin(), normalIndexRemapping.begin() + m_normals.size(), -1);
-                }
-                if (!m_uvIndices.empty()) {
-                    uvIndexRemapping.reserve(m_uvs.size());
-                    std::fill(uvIndexRemapping.begin(), uvIndexRemapping.begin() + m_uvs.size(), -1);
-                }
-
-                for (auto faceIndex : subset.indices) {
-                    int numVerticesInFace = m_faceVertexCounts[faceIndex];
-                    subsetVertexPerFace.push_back(numVerticesInFace);
-
-                    int faceIndexesOffset = indexesOffsetPrefixSum[faceIndex];
-
-                    for (int i = 0; i < numVerticesInFace; ++i) {
-                        const int pointIndex = m_faceVertexIndices[faceIndexesOffset + i];
-                        int subsetPointIndex = vertexIndexRemapping[pointIndex];
-                        if (subsetPointIndex == -1) {
-                            subsetPointIndex = static_cast<int>(subsetPoints.size());
-                            vertexIndexRemapping[pointIndex] = subsetPointIndex;
-
-                            subsetPoints.push_back(m_points[pointIndex]);
-                        }
-                        subsetIndexes.push_back(subsetPointIndex);
-
-                        if (!m_normals.empty()) {
-                            if (m_normalIndices.empty()) {
-                                subsetNormals.push_back(m_normals[pointIndex]);
-                            } else {
-                                const int normalIndex = m_normalIndices[faceIndexesOffset + i];
-                                int subsetNormalIndex = normalIndexRemapping[normalIndex];
-                                if (subsetNormalIndex == -1) {
-                                    subsetNormalIndex = static_cast<int>(subsetNormals.size());
-                                    normalIndexRemapping[normalIndex] = subsetNormalIndex;
-
-                                    subsetNormals.push_back(m_normals[normalIndex]);
-                                }
-                                subsetNormalIndices.push_back(subsetNormalIndex);
-                            }
-                        }
-
-                        if (!m_uvs.empty()) {
-                            if (m_uvIndices.empty()) {
-                                subsetUv.push_back(m_uvs[pointIndex]);
-                            } else {
-                                const int uvIndex = m_uvIndices[faceIndexesOffset + i];
-                                int subsetuvIndex = uvIndexRemapping[uvIndex];
-                                if (subsetuvIndex == -1) {
-                                    subsetuvIndex = static_cast<int>(subsetUv.size());
-                                    uvIndexRemapping[uvIndex] = subsetuvIndex;
-
-                                    subsetUv.push_back(m_uvs[uvIndex]);
-                                }
-                                subsetUvIndices.push_back(subsetuvIndex);
-                            }
-                        }
-                    }
-                }
-
-                if (auto rprMesh = rprApi->CreateMesh(subsetPoints, subsetIndexes, subsetNormals, subsetNormalIndices, subsetUv, subsetUvIndices, subsetVertexPerFace, m_topology.GetOrientation())) {
-                    rprApi->SetMeshId(rprMesh, GetPrimId());
-                    m_rprMeshes.push_back(rprMesh);
-                    ++it;
-                } else {
-                    it = m_geomSubsets.erase(it);
-                }
-            }
+            m_convertedFaceCounts.clear();
+            m_convertedFaceIndices.clear();
         }
     }
 
-    if (!m_rprMeshes.empty()) {
-        if (newMesh || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) {
-            PxOsdSubdivTags subdivTags = sceneDelegate->GetSubdivTags(id);
-
-            // XXX: RPR does not support this
-            /*
-            auto& cornerIndices = subdivTags.GetCornerIndices();
-            auto& cornerSharpness = subdivTags.GetCornerWeights();
-            if (!cornerIndices.empty() && !cornerSharpness.empty()) {
-
-            }
-
-            auto& creaseIndices = subdivTags.GetCreaseIndices();
-            auto& creaseSharpness = subdivTags.GetCreaseWeights();
-            if (!creaseIndices.empty() && !creaseSharpness.empty()) {
-
-            }
-            */
-
-            auto vertexInterpolationRule = subdivTags.GetVertexInterpolationRule();
-            for (auto& rprMesh : m_rprMeshes) {
-                rprApi->SetMeshVertexInterpolationRule(rprMesh, vertexInterpolationRule);
-            }
-        }
-
-        if (newMesh || isRefineLevelDirty) {
-            for (auto& rprMesh : m_rprMeshes) {
-                rprApi->SetMeshRefineLevel(rprMesh, m_enableSubdiv ? m_refineLevel : 0);
-            }
-        }
-
-        if (newMesh || ((*dirtyBits & HdChangeTracker::DirtyVisibility) || isVisibilityMaskDirty)) {
-            auto visibilityMask = m_visibilityMask;
-            if (!_sharedData.visible) {
-                // Override m_visibilityMask
-                visibilityMask = 0;
-            }
-            for (auto& rprMesh : m_rprMeshes) {
-                rprApi->SetMeshVisibility(rprMesh, visibilityMask);
-            }
-        }
-
-        if (newMesh || (*dirtyBits & HdChangeTracker::DirtyMaterialId) ||
-            (*dirtyBits & HdChangeTracker::DirtyDoubleSided) || // update twosided material node
-            (*dirtyBits & HdChangeTracker::DirtyDisplayStyle) || isRefineLevelDirty) { // update displacement material
-            auto getMeshMaterial = [sceneDelegate, rprApi, dirtyBits, this](SdfPath const& materialId) {
-                auto material = static_cast<const HdRprMaterial*>(sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, materialId));
-                if (material && material->GetRprMaterialObject()) {
-                    return material->GetRprMaterialObject();
-                } else {
-                    return GetFallbackMaterial(sceneDelegate, rprApi, *dirtyBits);
-                }
-            };
-
-            if (m_geomSubsets.empty()) {
-                auto material = getMeshMaterial(m_cachedMaterialId);
-                for (auto& mesh : m_rprMeshes) {
-                    rprApi->SetMeshMaterial(mesh, material, m_displayStyle.displacementEnabled);
-                }
-            } else {
-                if (m_geomSubsets.size() == m_rprMeshes.size()) {
-                    for (int i = 0; i < m_rprMeshes.size(); ++i) {
-                        auto material = getMeshMaterial(m_geomSubsets[i].materialId);
-                        rprApi->SetMeshMaterial(m_rprMeshes[i], material, m_displayStyle.displacementEnabled);
-                    }
-                } else {
-                    TF_CODING_ERROR("Unexpected number of meshes");
-                }
-            }
-        }
-
-        if (newMesh || (*dirtyBits & HdChangeTracker::DirtyInstancer)) {
-            if (auto instancer = static_cast<HdRprInstancer*>(sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()))) {
-                auto instanceTransforms = instancer->SampleInstanceTransforms(id);
-                auto newNumInstances = (instanceTransforms.count > 0) ? instanceTransforms.values[0].size() : 0;
-                if (newNumInstances == 0) {
-                    // Reset to state without instances
-                    for (auto instances : m_rprMeshInstances) {
-                        for (auto instance : instances) {
-                            rprApi->Release(instance);
-                        }
-                    }
-                    m_rprMeshInstances.clear();
-
-                    for (int i = 0; i < m_rprMeshes.size(); ++i) {
-                        rprApi->SetMeshVisibility(m_rprMeshes[i], _sharedData.visible);
-                    }
-                } else {
-                    updateTransform = false;
-
-                    std::vector<TfSmallVector<GfMatrix4d, 2>> combinedTransforms;
-                    combinedTransforms.reserve(newNumInstances);
-                    for (size_t i = 0; i < newNumInstances; ++i) {
-                        // Convert transform
-                        // Apply prototype transform (m_transformSamples) to all the instances
-                        combinedTransforms.emplace_back(instanceTransforms.count);
-                        auto& instanceTransform = combinedTransforms.back();
-
-                        if (m_transformSamples.count == 0 ||
-                            (m_transformSamples.count == 1 && (m_transformSamples.values[0] == GfMatrix4d(1)))) {
-                            for (size_t j = 0; j < instanceTransforms.count; ++j) {
-                                instanceTransform[j] = instanceTransforms.values[j][i];
-                            }
-                        } else {
-                            for (size_t j = 0; j < instanceTransforms.count; ++j) {
-                                GfMatrix4d xf_j = m_transformSamples.Resample(instanceTransforms.times[j]);
-                                instanceTransform[j] = xf_j * instanceTransforms.values[j][i];
-                            }
-                        }
-                    }
-
-                    // Release excessive mesh instances if any
-                    for (size_t i = m_rprMeshes.size(); i < m_rprMeshInstances.size(); ++i) {
-                        for (auto instance : m_rprMeshInstances[i]) {
-                            rprApi->Release(instance);
-                        }
-                    }
-
-                    m_rprMeshInstances.resize(m_rprMeshes.size());
-
-                    for (int i = 0; i < m_rprMeshes.size(); ++i) {
-                        auto& meshInstances = m_rprMeshInstances[i];
-                        if (meshInstances.size() != newNumInstances) {
-                            if (meshInstances.size() > newNumInstances) {
-                                for (size_t i = newNumInstances; i < meshInstances.size(); ++i) {
-                                    rprApi->Release(meshInstances[i]);
-                                }
-                                meshInstances.resize(newNumInstances);
-                            } else {
-                                for (int j = meshInstances.size(); j < newNumInstances; ++j) {
-                                    meshInstances.push_back(rprApi->CreateMeshInstance(m_rprMeshes[i]));
-                                }
-                            }
-                        }
-
-                        for (int j = 0; j < newNumInstances; ++j) {
-                            rprApi->SetTransform(meshInstances[j], instanceTransforms.count, instanceTransforms.times.data(), combinedTransforms[j].data());
-                        }
-
-                        // Hide prototype
-                        rprApi->SetMeshVisibility(m_rprMeshes[i], false);
-                    }
-                }
-            }
-        }
-
-        if (updateTransform) {
-            for (auto& rprMesh : m_rprMeshes) {
-                rprApi->SetTransform(rprMesh, m_transformSamples.count, m_transformSamples.times.data(), m_transformSamples.values.data());
-            }
-        }
+    m_commitDirtyBits = *dirtyBits | customDirtyBits;
+    if (m_commitDirtyBits != HdChangeTracker::Clean) {
+        rprApi->EnqueuePrimForCommit(this);
     }
 
     *dirtyBits = HdChangeTracker::Clean;
+
 }
 
 void HdRprMesh::Finalize(HdRenderParam* renderParam) {
@@ -620,6 +586,426 @@ void HdRprMesh::Finalize(HdRenderParam* renderParam) {
     m_fallbackMaterial = nullptr;
 
     HdMesh::Finalize(renderParam);
+}
+
+rpr::Shape* CreateRprMesh(
+    rpr::Context* rprContext,
+    rpr::Scene* rprScene,
+    VtIntArray const& vpf,
+    VtVec3fArray const& points,
+    VtIntArray const& pointIndices,
+    VtVec3fArray const& normals,
+    VtIntArray const& normalIndices,
+    VtVec2fArray const& uvs,
+    VtIntArray const& uvIndices) {
+    if (!rprContext || !rprScene ||
+        points.empty() || pointIndices.empty()) {
+        return nullptr;
+    }
+
+    auto normalIndicesData = normalIndices.data();
+    if (normals.empty()) {
+        normalIndicesData = nullptr;
+    }
+
+    auto uvIndicesData = uvIndices.data();
+    if (uvs.empty()) {
+        uvIndicesData = nullptr;
+    }
+
+    rpr::Status status;
+    auto mesh = rprContext->CreateShape(
+        (rpr_float const*)points.data(), points.size(), sizeof(GfVec3f),
+        (rpr_float const*)(normals.data()), normals.size(), sizeof(GfVec3f),
+        (rpr_float const*)(uvs.data()), uvs.size(), sizeof(GfVec2f),
+        pointIndices.data(), sizeof(rpr_int),
+        normalIndicesData, sizeof(rpr_int),
+        uvIndicesData, sizeof(rpr_int),
+        vpf.data(), vpf.size(), &status);
+    if (!mesh) {
+        RPR_ERROR_CHECK(status, "Failed to create mesh");
+        return nullptr;
+    }
+
+    if (RPR_ERROR_CHECK(rprScene->Attach(mesh), "Failed to attach mesh to scene")) {
+        delete mesh;
+        return nullptr;
+    }
+
+    return mesh;
+}
+
+void HdRprSetVisibility(rpr::Shape* mesh, uint32_t visibilityMask, RprUsdContextMetadata const& contextMetadata, rpr::Scene* scene) {
+    if (contextMetadata.pluginType == kPluginHybrid) {
+        // XXX (Hybrid): rprShapeSetVisibility not supported, emulate visibility using attach/detach
+        if (visibilityMask) {
+            scene->Attach(mesh);
+        } else {
+            scene->Detach(mesh);
+        }
+    } else {
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_PRIMARY_ONLY_FLAG, visibilityMask & kVisiblePrimary), "Failed to set mesh primary visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_SHADOW, visibilityMask & kVisibleShadow), "Failed to set mesh shadow visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_REFLECTION, visibilityMask & kVisibleReflection), "Failed to set mesh reflection visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_REFRACTION, visibilityMask & kVisibleRefraction), "Failed to set mesh refraction visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_TRANSPARENT, visibilityMask & kVisibleTransparent), "Failed to set mesh transparent visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_DIFFUSE, visibilityMask & kVisibleDiffuse), "Failed to set mesh diffuse visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_GLOSSY_REFLECTION, visibilityMask & kVisibleGlossyReflection), "Failed to set mesh glossyReflection visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_GLOSSY_REFRACTION, visibilityMask & kVisibleGlossyRefraction), "Failed to set mesh glossyRefraction visibility");
+        RPR_ERROR_CHECK(mesh->SetVisibilityFlag(RPR_SHAPE_VISIBILITY_LIGHT, visibilityMask & kVisibleLight), "Failed to set mesh light visibility");
+    }
+}
+
+void HdRprRelease(rpr::Shape* shape, rpr::Scene* scene) {
+    if (!shape) return;
+
+    RPR_ERROR_CHECK(scene->Detach(shape), "Failed to detach mesh from scene");
+    delete shape;
+}
+
+void HdRprSetTransform(rpr::SceneObject* object, GfMatrix4d const& transform) {
+    auto rprTransform = GfMatrix4f(transform);
+    RPR_ERROR_CHECK(object->SetTransform(rprTransform.GetArray(), false), "Fail set object transform");
+}
+
+void HdRprSetTransform(rpr::Shape* shape, size_t numSamples, float* timeSamples, GfMatrix4d* transformSamples) {
+    if (numSamples == 1) {
+        return HdRprSetTransform(shape, transformSamples[0]);
+    }
+
+    // XXX (RPR): there is no way to sample all transforms via current RPR API
+    auto& startTransform = transformSamples[0];
+    auto& endTransform = transformSamples[numSamples - 1];
+
+    GfVec3f linearMotion, scaleMotion, rotateAxis;
+    float rotateAngle;
+    HdRprGetMotion(startTransform, endTransform, &linearMotion, &scaleMotion, &rotateAxis, &rotateAngle);
+
+    auto rprStartTransform = GfMatrix4f(startTransform);
+
+    RPR_ERROR_CHECK(shape->SetTransform(rprStartTransform.GetArray(), false), "Fail set shape transform");
+    RPR_ERROR_CHECK(shape->SetLinearMotion(linearMotion[0], linearMotion[1], linearMotion[2]), "Fail to set shape linear motion");
+    RPR_ERROR_CHECK(shape->SetScaleMotion(scaleMotion[0], scaleMotion[1], scaleMotion[2]), "Fail to set shape scale motion");
+    RPR_ERROR_CHECK(shape->SetAngularMotion(rotateAxis[0], rotateAxis[1], rotateAxis[2], rotateAngle), "Fail to set shape angular motion");
+}
+
+void HdRprMesh::Commit(
+    rpr::Context* rprContext, rpr::Scene* rprScene,
+    RprUsdContextMetadata const& rprContextMetadata) {
+    if (m_commitDirtyBits == HdChangeTracker::Clean) {
+        TF_CODING_ERROR("False commit called");
+        return;
+    }
+
+    if (m_commitDirtyBits & kDirtyMesh) {
+        for (auto mesh : m_rprMeshes) {
+            HdRprRelease(mesh, rprScene);
+        }
+        m_rprMeshes.clear();
+
+        for (auto instances : m_rprMeshInstances) {
+            for (auto instance : instances) {
+                HdRprRelease(instance, rprScene);
+            }
+        }
+        m_rprMeshInstances.clear();
+
+        auto& geomSubsets = m_topology.GetGeomSubsets();
+        if (geomSubsets.empty()) {
+            auto& vpf = m_convertedFaceCounts.empty() ? m_topology.GetFaceVertexCounts() : m_convertedFaceCounts;
+            auto& pointIndices = m_convertedFaceIndices.empty() ? m_topology.GetFaceVertexIndices() : m_convertedFaceIndices;
+
+            auto rprMesh = CreateRprMesh(rprContext, rprScene, vpf, m_points, pointIndices, m_normals, m_normalIndices, m_uvs, m_uvIndices);
+            if (rprMesh) {
+                RPR_ERROR_CHECK(rprMesh->SetObjectID(GetPrimId()), "Failed to set mesh id");
+                m_rprMeshes.push_back(rprMesh);
+            }
+        } else {
+            auto& faceVertexIndices = m_topology.GetFaceVertexIndices();
+            auto& faceVertexCounts = m_topology.GetFaceVertexCounts();
+
+            auto numFaces = faceVertexCounts.size();
+            std::vector<bool> faceIsUnused(numFaces, true);
+            size_t numUnusedFaces = faceIsUnused.size();
+            for (auto const& subset : geomSubsets) {
+                for (int index : subset.indices) {
+                    if (TF_VERIFY(index < numFaces) && faceIsUnused[index]) {
+                        faceIsUnused[index] = false;
+                        numUnusedFaces--;
+                    }
+                }
+            }
+            // If we found any unused faces, build a final subset with those faces.
+            // Use the material bound to the parent mesh.
+            VtIntArray unusedFaces;
+            if (numUnusedFaces) {
+                unusedFaces.reserve(numUnusedFaces);
+                for (size_t i = 0; i < faceIsUnused.size() && unusedFaces.size() < numUnusedFaces; ++i) {
+                    if (faceIsUnused[i]) {
+                        unusedFaces.push_back(i);
+                    }
+                }
+            }
+
+            // GeomSubset may reference face subset in any given order so we need to be able to
+            //   randomly lookup face indices but each face may be of an arbitrary number of vertices
+            std::vector<int> indicesOffsetPrefixSum;
+            indicesOffsetPrefixSum.reserve(faceVertexCounts.size());
+            int offset = 0;
+            for (auto numVerticesInFace : faceVertexCounts) {
+                indicesOffsetPrefixSum.push_back(offset);
+                offset += numVerticesInFace;
+            }
+
+            auto vertexIndexRemapping = std::make_unique<int[]>(m_points.size());
+            std::unique_ptr<int[]> normalIndexRemapping;
+            if (!m_normals.empty() && !m_normalIndices.empty()) {
+                normalIndexRemapping = std::make_unique<int[]>(m_normals.size());
+            }
+            std::unique_ptr<int[]> uvIndexRemapping;
+            if (!m_uvs.empty() && !m_uvIndices.empty()) {
+                uvIndexRemapping = std::make_unique<int[]>(m_uvs.size());
+            }
+
+            auto processGeomSubset = [&](VtIntArray const& faceIndices) {
+                VtVec3fArray subsetPoints;
+                VtVec3fArray subsetNormals;
+                VtVec2fArray subsetUvs;
+                VtIntArray subsetNormalIndices;
+                VtIntArray subsetUvIndices;
+                VtIntArray subsetPointIndices;
+                VtIntArray subsetVertexPerFace;
+                subsetVertexPerFace.reserve(faceIndices.size());
+
+                std::fill(vertexIndexRemapping.get(), vertexIndexRemapping.get() + m_points.size(), -1);
+                if (normalIndexRemapping) {
+                    std::fill(normalIndexRemapping.get(), normalIndexRemapping.get() + m_normals.size(), -1);
+                }
+                if (uvIndexRemapping) {
+                    std::fill(uvIndexRemapping.get(), uvIndexRemapping.get() + m_uvs.size(), -1);
+                }
+
+                for (auto faceIndex : faceIndices) {
+                    int numVerticesInFace = faceVertexCounts[faceIndex];
+                    subsetVertexPerFace.push_back(numVerticesInFace);
+
+                    int faceIndicesOffset = indicesOffsetPrefixSum[faceIndex];
+
+                    for (int i = 0; i < numVerticesInFace; ++i) {
+                        const int pointIndex = faceVertexIndices[faceIndicesOffset + i];
+                        int subsetPointIndex = vertexIndexRemapping[pointIndex];
+                        if (subsetPointIndex == -1) {
+                            subsetPointIndex = static_cast<int>(subsetPoints.size());
+                            vertexIndexRemapping[pointIndex] = subsetPointIndex;
+
+                            subsetPoints.push_back(m_points[pointIndex]);
+                        }
+                        subsetPointIndices.push_back(subsetPointIndex);
+
+                        if (!m_normals.empty()) {
+                            if (m_normalIndices.empty()) {
+                                subsetNormals.push_back(m_normals[pointIndex]);
+                            } else {
+                                const int normalIndex = m_normalIndices[faceIndicesOffset + i];
+                                int subsetNormalIndex = normalIndexRemapping[normalIndex];
+                                if (subsetNormalIndex == -1) {
+                                    subsetNormalIndex = static_cast<int>(subsetNormals.size());
+                                    normalIndexRemapping[normalIndex] = subsetNormalIndex;
+
+                                    subsetNormals.push_back(m_normals[normalIndex]);
+                                }
+                                subsetNormalIndices.push_back(subsetNormalIndex);
+                            }
+                        }
+
+                        if (!m_uvs.empty()) {
+                            if (m_uvIndices.empty()) {
+                                subsetUvs.push_back(m_uvs[pointIndex]);
+                            } else {
+                                const int uvIndex = m_uvIndices[faceIndicesOffset + i];
+                                int subsetuvIndex = uvIndexRemapping[uvIndex];
+                                if (subsetuvIndex == -1) {
+                                    subsetuvIndex = static_cast<int>(subsetUvs.size());
+                                    uvIndexRemapping[uvIndex] = subsetuvIndex;
+
+                                    subsetUvs.push_back(m_uvs[uvIndex]);
+                                }
+                                subsetUvIndices.push_back(subsetuvIndex);
+                            }
+                        }
+                    }
+                }
+
+                VtIntArray convertedSubsetVpf;
+                VtIntArray convertedSubsetPointIndices;
+                PreprocessMeshData(rprContextMetadata, m_topology.GetOrientation(), subsetPoints, subsetVertexPerFace, subsetPointIndices,
+                    &convertedSubsetVpf, &convertedSubsetPointIndices, &subsetNormals, &subsetNormalIndices, &subsetUvs, &subsetUvIndices);
+
+                auto& vpf = convertedSubsetVpf.empty() ? subsetVertexPerFace : convertedSubsetVpf;
+                auto& pointIndices = convertedSubsetPointIndices.empty() ? subsetPointIndices : convertedSubsetPointIndices;
+
+                auto rprMesh = CreateRprMesh(rprContext, rprScene, vpf, subsetPoints, pointIndices, subsetNormals, subsetNormalIndices, subsetUvs, subsetUvIndices);
+                if (rprMesh) {
+                    RPR_ERROR_CHECK(rprMesh->SetObjectID(GetPrimId()), "Failed to set mesh id");
+                }
+                m_rprMeshes.push_back(rprMesh);
+            };
+
+            for (auto& subset : geomSubsets) {
+                if (subset.type != HdGeomSubset::TypeFaceSet) {
+                    TF_RUNTIME_ERROR("Unknown HdGeomSubset Type");
+                    continue;
+                }
+
+                processGeomSubset(subset.indices);
+            }
+        }
+    }
+
+    if (!m_rprMeshes.empty()) {
+        bool newMesh = m_commitDirtyBits & kDirtyMesh;
+
+        if (newMesh || (m_commitDirtyBits & HdChangeTracker::DirtySubdivTags)) {
+            rpr_subdiv_boundary_interfop_type interfopType = m_vertexInterpolationRule == PxOsdOpenSubdivTokens->edgeAndCorner ?
+                RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_AND_CORNER :
+                RPR_SUBDIV_BOUNDARY_INTERFOP_TYPE_EDGE_ONLY;
+            for (auto& rprMesh : m_rprMeshes) {
+                if (rprMesh) {
+                    RPR_ERROR_CHECK(rprMesh->SetSubdivisionBoundaryInterop(interfopType), "Fail set mesh subdividion boundary");
+                }
+            }
+        }
+
+        if (newMesh || (m_commitDirtyBits & kDirtyRefineLevel)) {
+            bool enableSubdiv = m_topology.GetScheme() == PxOsdOpenSubdivTokens->catmullClark;
+            int refineLevel = enableSubdiv ? m_refineLevel : 0;
+            for (auto& rprMesh : m_rprMeshes) {
+                if (rprMesh) {
+                    RPR_ERROR_CHECK(rprMesh->SetSubdivisionFactor(refineLevel), "Failed to set mesh subdividion level");
+                }
+            }
+        }
+
+        if (newMesh || ((m_commitDirtyBits & HdChangeTracker::DirtyVisibility) || (m_commitDirtyBits & kDirtyVisibilityMask))) {
+            auto visibilityMask = GetVisibilityMask();
+            for (auto& rprMesh : m_rprMeshes) {
+                if (rprMesh) {
+                    HdRprSetVisibility(rprMesh, visibilityMask, rprContextMetadata, rprScene);
+                }
+            }
+        }
+
+        if (newMesh ||
+            (m_commitDirtyBits & HdChangeTracker::DirtyMaterialId) ||
+            (m_commitDirtyBits & HdChangeTracker::DirtyDisplayStyle) || (m_commitDirtyBits & kDirtyRefineLevel)) { // update displacement material
+            for (int i = 0; i < m_rprMeshes.size(); ++i) {
+                auto rprMesh = m_rprMeshes[i];
+                if (!rprMesh) continue;
+
+                RprUsdMaterial const* material = m_fallbackMaterial;
+                if (i < m_materials.size() && m_materials[i]) {
+                    if (auto rprMaterial = m_materials[i]->GetRprMaterialObject()) {
+                        material = rprMaterial;
+                    }
+                }
+
+                if (material) {
+                    material->AttachTo(rprMesh, m_displayStyle.displacementEnabled);
+                } else {
+                    RprUsdMaterial::DetachFrom(rprMesh);
+                }
+            }
+        }
+
+        if (newMesh || (m_commitDirtyBits & HdChangeTracker::DirtyInstancer)) {
+            if (m_instanceTransforms.empty()) {
+                // Reset to state without instances
+                if (!m_rprMeshInstances.empty()) {
+                    for (auto instances : m_rprMeshInstances) {
+                        for (auto instance : instances) {
+                            HdRprRelease(instance, rprScene);
+                        }
+                    }
+                    m_rprMeshInstances.clear();
+
+                    auto visibilityMask = GetVisibilityMask();
+                    for (auto& rprMesh : m_rprMeshes) {
+                        if (rprMesh) {
+                            HdRprSetVisibility(rprMesh, visibilityMask, rprContextMetadata, rprScene);
+                        }
+                    }
+                }
+            } else {
+                m_commitDirtyBits &= ~HdChangeTracker::DirtyTransform;
+
+                // Release excessive mesh instances if any
+                for (size_t i = m_rprMeshes.size(); i < m_rprMeshInstances.size(); ++i) {
+                    for (auto instance : m_rprMeshInstances[i]) {
+                        HdRprRelease(instance, rprScene);
+                    }
+                }
+                m_rprMeshInstances.resize(m_rprMeshes.size());
+
+                auto numInstances = m_instanceTransforms.size();
+
+                for (int i = 0; i < m_rprMeshes.size(); ++i) {
+                    auto prototype = m_rprMeshes[i];
+                    if (!prototype) continue;
+
+                    auto& meshInstances = m_rprMeshInstances[i];
+                    if (meshInstances.size() != numInstances) {
+                        if (meshInstances.size() > numInstances) {
+                            for (size_t i = numInstances; i < meshInstances.size(); ++i) {
+                                HdRprRelease(meshInstances[i], rprScene);
+                            }
+                            meshInstances.resize(numInstances);
+                        } else {
+                            for (int j = meshInstances.size(); j < numInstances; ++j) {
+                                rpr::Status status;
+                                auto instance = rprContext->CreateShapeInstance(prototype, &status);
+                                if (instance) {
+                                    if (!RPR_ERROR_CHECK(rprScene->Attach(instance), "Failed to attach mesh instance to scene")) {
+                                        meshInstances.push_back(instance);
+                                    } else {
+                                        delete instance;
+                                    }
+                                } else {
+                                    RPR_ERROR_CHECK(status, "Failed to create mesh instance");
+                                }
+                            }
+                        }
+                    }
+
+                    for (int j = 0; j < meshInstances.size(); ++j) {
+                        HdRprSetTransform(meshInstances[j], m_instanceTransformTimes.size(), m_instanceTransformTimes.data(), m_instanceTransforms[j].data());
+                    }
+
+                    // Hide prototype
+                    HdRprSetVisibility(prototype, 0, rprContextMetadata, rprScene);
+                }
+            }
+        }
+
+        if (m_commitDirtyBits & HdChangeTracker::DirtyTransform) {
+            for (auto rprMesh : m_rprMeshes) {
+                if (!rprMesh) continue;
+
+                HdRprSetTransform(rprMesh, m_transformSamples.count, m_transformSamples.times.data(), m_transformSamples.values.data());
+            }
+        }
+    }
+
+    m_commitDirtyBits = HdChangeTracker::Clean;
+
+}
+
+uint32_t HdRprMesh::GetVisibilityMask() const {
+    auto visibilityMask = m_visibilityMask;
+    if (!_sharedData.visible) {
+        // Override m_visibilityMask
+        visibilityMask = 0;
+    }
+    return visibilityMask;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

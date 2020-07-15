@@ -144,6 +144,8 @@ pxr_plugin(hdRpr
 
     PRIVATE_HEADERS
         boostIncludePath.h
+        rprApiSyncPrim.h
+        motion.h
         api.h
 
     RESOURCE_FILES

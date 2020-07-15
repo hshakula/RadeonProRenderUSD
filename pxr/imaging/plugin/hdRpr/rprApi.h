@@ -41,7 +41,10 @@ class HdRprRenderThread;
 class MaterialAdapter;
 
 class HdRprApiImpl;
+class HdRprApiSyncPrim;
+
 class RprUsdMaterial;
+struct RprUsdContextMetadata;
 
 struct HdRprApiVolume;
 struct HdRprApiEnvironmentLight;
@@ -139,6 +142,8 @@ public:
     void SetAovBindings(HdRenderPassAovBindingVector const& aovBindings);
     HdRenderPassAovBindingVector GetAovBindings() const;
 
+    void EnqueuePrimForCommit(HdRprApiSyncPrim* prim) const;
+
     int GetNumCompletedSamples() const;
     // returns -1 if adaptive sampling is not used
     int GetNumActivePixels() const;
@@ -151,6 +156,7 @@ public:
     bool IsGlInteropEnabled() const;
     bool IsArbitraryShapedLightSupported() const;
     int GetCurrentRenderQuality() const;
+    RprUsdContextMetadata const& GetContextMetadata() const;
     void ExportRprSceneOnNextRender(const char* exportPath);
 
     static std::string GetAppDataPath();
