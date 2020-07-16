@@ -385,6 +385,8 @@ bool HdRprDelegate::Resume() {
     return true;
 }
 
+#if PXR_VERSION >= 2005
+
 void HdRprDelegate::SetDrivers(HdDriverVector const& drivers) {
     for (HdDriver* hdDriver : drivers) {
         if (hdDriver->name == _tokens->RPR && hdDriver->driver.IsHolding<VtDictionary>()) {
@@ -414,8 +416,6 @@ void HdRprDelegate::SetDrivers(HdDriverVector const& drivers) {
         }
     }
 }
-
-#if PXR_VERSION >= 2005
 
 bool HdRprDelegate::IsStopSupported() const {
     return true;

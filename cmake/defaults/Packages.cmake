@@ -87,6 +87,8 @@ endif()
 # Third Party Plugin Package Requirements
 # ----------------------------------------------
 
+find_package(Vulkan REQUIRED)
+
 if(HoudiniUSD_FOUND)
     find_package(OpenVDB REQUIRED)
 else()

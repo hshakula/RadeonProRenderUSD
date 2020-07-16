@@ -129,6 +129,7 @@ pxr_plugin(hdRpr
         ${RIF_LIBRARY}
         ${OPENEXR_LIBRARIES}
         ${USD_LIBRARIES}
+        ${Vulkan_LIBRARIES}
 
         ${OptLibs}
 
@@ -139,6 +140,7 @@ pxr_plugin(hdRpr
         ${CMAKE_CURRENT_BINARY_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
         ${OPENEXR_INCLUDE_DIRS}
+        ${Vulkan_INCLUDE_DIRS}
         
         ${OptIncludeDir}
 

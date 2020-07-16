@@ -274,7 +274,8 @@ Context* CreateContext(char const* cachePath, ContextMetadata* metadata) {
     Status status;
     rpr::Context* context = nullptr;
 
-    if (metadata->pluginType == rpr::PluginType::kPluginHybrid) {
+    if (metadata->pluginType == rpr::PluginType::kPluginHybrid &&
+        metadata->interopInfo) {
         // Create interop context for hybrid
         constexpr std::uint32_t MB = 1024u * 1024u;
         std::uint32_t acc_size = 1024 * MB;
@@ -293,7 +294,7 @@ Context* CreateContext(char const* cachePath, ContextMetadata* metadata) {
 
         context = Context::Create(RPR_API_VERSION, &pluginID, 1, flags, properties, cachePath, &status);
     } else {
-        // Create non-interop context for tahoe
+        // Create non-interop context
         context = Context::Create(RPR_API_VERSION, &pluginID, 1, flags, nullptr, cachePath, &status);
     }
 

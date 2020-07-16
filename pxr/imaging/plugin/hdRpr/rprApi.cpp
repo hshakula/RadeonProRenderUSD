@@ -1533,6 +1533,11 @@ public:
     }
 
     void RenderImpl(HdRprRenderThread* renderThread) {
+        if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid &&
+            m_rprContextMetadata.interopInfo) {
+            return InteropRenderImpl(renderThread);
+        }
+
         int numSamplesPerIter = 1;
 
         const bool isBatch = m_delegate->IsBatch();
@@ -1670,14 +1675,7 @@ public:
 
         if (m_state == kStateRender) {
             try {
-                if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid)
-                {
-                    InteropRenderImpl(renderThread);
-                }
-                else
-                {
-                    RenderImpl(renderThread);
-                }
+                RenderImpl(renderThread);
             } catch (std::runtime_error const& e) {
                 TF_RUNTIME_ERROR("Failed to render frame: %s", e.what());
             }
@@ -1781,7 +1779,7 @@ Don't show this message again?
     }
 
     void SetInteropInfo(void* interopInfo, std::condition_variable* presentedConditionVariable, bool* presentedCondition) {
-        m_interopInfo = interopInfo;
+        m_rprContextMetadata.interopInfo = interopInfo;
         m_presentedConditionVariable = presentedConditionVariable;
         m_presentedCondition = presentedCondition;
     }
@@ -1816,21 +1814,21 @@ private:
         m_rprContextMetadata.pluginType = GetPluginType(renderQuality);
 
         auto cachePath = HdRprApi::GetCachePath();
-        m_rprContextMetadata.interopInfo = m_interopInfo;
         m_rprContext.reset(rpr::CreateContext(cachePath.c_str(), &m_rprContextMetadata));
         if (!m_rprContext) {
             RPR_THROW_ERROR_MSG("Failed to create RPR context");
         }
 
-        if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid) {
-            RPR_ERROR_CHECK_THROW(m_rprContext->SetParameter(RPR_CONTEXT_Y_FLIP, 1), "Fail to set context Y FLIP parameter");
+        uint32_t yFlip = 0;
+        if (m_rprContextMetadata.pluginType == rpr::kPluginHybrid &&
+            m_rprContextMetadata.interopInfo) {
             RPR_ERROR_CHECK_THROW(m_rprContext->GetFunctionPtr(
                 RPR_CONTEXT_FLUSH_FRAMEBUFFERS_FUNC_NAME, 
                 (void**)(&m_rprContextFlushFrameBuffers)
             ), "Fail to get rprContextFlushFramebuffers function");
-        } else if (m_rprContextMetadata.pluginType == rpr::kPluginTahoe) {
-            RPR_ERROR_CHECK_THROW(m_rprContext->SetParameter(RPR_CONTEXT_Y_FLIP, 0), "Fail to set context Y FLIP parameter");
+            yFlip = 1;
         }
+        RPR_ERROR_CHECK_THROW(m_rprContext->SetParameter(RPR_CONTEXT_Y_FLIP, yFlip), "Fail to set context Y FLIP parameter");
 
         {
             HdRprConfig* config;
@@ -2423,10 +2421,10 @@ private:
     State m_state = kStateUninitialized;
 
     bool m_showRestartRequiredWarning = true;
+
     std::mutex m_rprSceneExportPathMutex;
     std::string m_rprSceneExportPath;
 
-    void* m_interopInfo = nullptr;
     std::condition_variable* m_presentedConditionVariable = nullptr;
     bool* m_presentedCondition = nullptr;
     rprContextFlushFrameBuffers_func m_rprContextFlushFrameBuffers = nullptr;
