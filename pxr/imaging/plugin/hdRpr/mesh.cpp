@@ -18,6 +18,7 @@ limitations under the License.
 #include "primvarUtil.h"
 #include "rprApi.h"
 
+#include "pxr/imaging/rprUsd/profiler.h"
 #include "pxr/imaging/rprUsd/material.h"
 
 #include "pxr/imaging/pxOsd/tokens.h"
@@ -150,6 +151,8 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();
 
     SdfPath const& id = GetId();
+
+    auto startTime = RprUsdProfiler::clock::now();
 
     ////////////////////////////////////////////////////////////////////////
     // 1. Pull scene data.
@@ -600,6 +603,8 @@ void HdRprMesh::Sync(HdSceneDelegate* sceneDelegate,
     }
 
     *dirtyBits = HdChangeTracker::Clean;
+
+    RprUsdProfiler::SampleInterval(RprUsdProfiler::kMeshSyncInterval, RprUsdProfiler::clock::now() - startTime);
 }
 
 void HdRprMesh::Finalize(HdRenderParam* renderParam) {

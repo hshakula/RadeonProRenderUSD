@@ -16,6 +16,8 @@ limitations under the License.
 #include "renderParam.h"
 #include "rprApi.h"
 
+#include "pxr/imaging/rprUsd/profiler.h"
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 HdRprMaterial::HdRprMaterial(SdfPath const& id) : HdMaterial(id) {
@@ -30,11 +32,15 @@ void HdRprMaterial::Sync(HdSceneDelegate* sceneDelegate,
     auto rprApi = rprRenderParam->AcquireRprApiForEdit();
 
     if (*dirtyBits & HdMaterial::DirtyResource) {
+        auto startTime = RprUsdProfiler::clock::now();
+
         VtValue vtMat = sceneDelegate->GetMaterialResource(GetId());
         if (vtMat.IsHolding<HdMaterialNetworkMap>()) {
             auto& networkMap = vtMat.UncheckedGet<HdMaterialNetworkMap>();
             m_rprMaterial = rprApi->CreateMaterial(sceneDelegate, networkMap);
         }
+
+        RprUsdProfiler::SampleInterval(RprUsdProfiler::kMaterialSyncInterval, RprUsdProfiler::clock::now() - startTime);
     }
 
     *dirtyBits = Clean;

@@ -24,6 +24,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 class RprUsdProfiler {
 public:
+    using clock = std::chrono::high_resolution_clock;
+
     enum TimePoint {
         kDelegateCreationEnd = 0,
         kContextCreationStart,
@@ -32,11 +34,23 @@ public:
         kTextureCommitEnd,
         kTexturesLoadingStart,
         kTexturesLoadingEnd,
+        kMTResourcesCommitStart,
+        kMTResourcesCommitEnd,
         kTimePointsCount
     };
 
     RPRUSD_API
     static void RecordTimePoint(TimePoint timePoint);
+
+    enum IntervalType {
+        kMaterialSyncInterval = 0,
+        kMeshSyncInterval,
+        kMeshCommitInterval,
+        kIntervalsCount
+    };
+
+    RPRUSD_API
+    static void SampleInterval(IntervalType interval, clock::duration intervalDuration);
 
     RPRUSD_API
     static void DumpSyncStats();
@@ -49,13 +63,23 @@ private:
         return TfSingleton<RprUsdProfiler>::GetInstance();
     }
 
-    using clock = std::chrono::high_resolution_clock;
-
     static std::string FormatDuration(clock::duration duration);
 
 private:
     bool m_firstSync = true;
     clock::time_point m_timePoints[kTimePointsCount];
+
+    struct Interval {
+        clock::duration duration = {};
+        int numSamples = 0;
+    };
+    Interval m_intervals[kIntervalsCount];
+
+    static constexpr const char* kIntervalNames[kIntervalsCount] = {
+        "material sync",
+        "mesh sync",
+        "mesh commit",
+    };
 };
 
 /// By default profiler 
@@ -84,6 +108,14 @@ inline void RprUsdProfiler::RecordTimePoint(TimePoint timePoint) {
     }
 }
 
+inline void RprUsdProfiler::SampleInterval(IntervalType intervalType, clock::duration intervalDuration) {
+    RPR_USD_PROFILER_FUNCTION_BEGIN;
+    auto& interval = GetInstance().m_intervals[intervalType];
+
+    interval.duration += intervalDuration;
+    interval.numSamples++;
+}
+
 inline void RprUsdProfiler::DumpSyncStats() {
     RPR_USD_PROFILER_FUNCTION_BEGIN;
     auto& profiler = GetInstance();
@@ -92,6 +124,14 @@ inline void RprUsdProfiler::DumpSyncStats() {
         profiler.m_firstSync = false;
 
         printf("Time from delegate creation: %s\n", FormatDuration(clock::now() - profiler.m_timePoints[kDelegateCreationEnd]).c_str());
+    }
+
+    auto mtCommitDuration = profiler.m_timePoints[kMTResourcesCommitEnd] - profiler.m_timePoints[kMTResourcesCommitStart];
+    if (mtCommitDuration.count() > 0) {
+        printf("MT commit: %s\n", FormatDuration(mtCommitDuration).c_str());
+
+        profiler.m_timePoints[kMTResourcesCommitStart] = {};
+        profiler.m_timePoints[kMTResourcesCommitEnd] = {};
     }
 
     auto textureCommitDuration = profiler.m_timePoints[kTextureCommitEnd] - profiler.m_timePoints[kTextureCommitStart];
@@ -107,6 +147,16 @@ inline void RprUsdProfiler::DumpSyncStats() {
         profiler.m_timePoints[kTextureCommitEnd] = {};
         profiler.m_timePoints[kTexturesLoadingStart] = {};
         profiler.m_timePoints[kTexturesLoadingEnd] = {};
+    }
+
+    for (int i = 0; i < kIntervalsCount; ++i) {
+        auto& interval = profiler.m_intervals[i];
+        if (!interval.numSamples) continue;
+
+        printf("Total duration of %s: %s\n", kIntervalNames[i], FormatDuration(interval.duration).c_str());
+
+        interval.numSamples = 0;
+        interval.duration = {0};
     }
 }
 
