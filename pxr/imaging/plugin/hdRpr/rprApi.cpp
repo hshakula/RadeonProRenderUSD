@@ -157,17 +157,13 @@ public:
     }
 
     rpr::FrameBuffer* GetColorFramebuffer() {
-        auto aovIter = m_boundAovs.find(HdAovTokens->color);
-        if (aovIter == m_boundAovs.end()) {
-            return nullptr;
+        if (auto colorAov = GetColorAov()) {
+            if (auto fb = colorAov->GetAovFb()) {
+                return fb->GetRprObject();
+            }
         }
 
-        auto fb = (*aovIter).second->GetAovFb();
-        if (fb == nullptr) {
-            return nullptr;
-        }
-
-        return fb->GetRprObject();
+        return nullptr;
     }
 
     void InitIfNeeded() {
@@ -1619,7 +1615,7 @@ public:
         std::unique_lock<std::mutex> lock(m_rprContext->GetMutex());
         m_presentedConditionVariable->wait(lock, [this] { return *m_presentedCondition == true; });
 
-        rpr_int status = m_rprContextFlushFrameBuffers(m_rprContext->Handle());
+        rpr_int status = m_rprContextFlushFrameBuffers(rpr::GetRprObject(m_rprContext.get()));
         if (status != RPR_SUCCESS) {
             TF_WARN("rprContextFlushFrameBuffers returns: %d", status);
         }
