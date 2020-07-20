@@ -157,7 +157,7 @@ public:
     }
 
     rpr::FrameBuffer* GetColorFramebuffer() {
-        if (auto colorAov = GetColorAov()) {
+        if (auto colorAov = GetAov(HdRprAovTokens->rawColor, 0, 0, HdFormat::HdFormatInvalid)) {
             if (auto fb = colorAov->GetAovFb()) {
                 return fb->GetRprObject();
             }
