@@ -37,7 +37,7 @@ public:
     virtual void Update(HdRprApi const* rprApi, rif::Context* rifContext);
     virtual void Resolve();
 
-    virtual bool GetData(void* dstBuffer, size_t dstBufferSize);
+    virtual bool GetData(void* dstBuffer, size_t dstBufferSize, bool interactive);
     void Clear();
 
     HdFormat GetFormat() const { return m_format; }
@@ -70,7 +70,7 @@ protected:
     uint32_t m_dirtyBits = AllDirty;
 
 private:
-    bool GetDataImpl(void* dstBuffer, size_t dstBufferSize);
+    bool GetDataImpl(void* dstBuffer, size_t dstBufferSize, bool interactive);
 };
 
 class HdRprApiColorAov : public HdRprApiAov {
@@ -80,7 +80,7 @@ public:
 
     void Resize(int width, int height, HdFormat format) override;
     void Update(HdRprApi const* rprApi, rif::Context* rifContext) override;
-    bool GetData(void* dstBuffer, size_t dstBufferSize) override;
+    bool GetData(void* dstBuffer, size_t dstBufferSize, bool interactive) override;
     void Resolve() override;
 
     void SetOpacityAov(std::shared_ptr<HdRprApiAov> opacity);

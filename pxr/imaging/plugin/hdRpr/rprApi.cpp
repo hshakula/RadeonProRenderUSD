@@ -53,11 +53,13 @@ using json = nlohmann::json;
 #include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/base/tf/envSetting.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/work/loops.h"
 
 #include "notify/message.h"
 
 #include <RadeonProRender_Baikal.h>
 #include <RprLoadStore.h>
+#include <iostream>
 
 #ifdef BUILD_AS_HOUDINI_PLUGIN
 #include <HOM/HOM_Module.h>
@@ -1319,24 +1321,50 @@ public:
         return m_aovBindings;
     }
 
-    void ResolveFramebuffers() {
+    void ResolveFramebuffers(bool interactive) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
         m_resolveData.ForAllAovs([&](ResolveData::AovEntry& e) {
             if (m_isFirstSample || e.isMultiSampled) {
                 e.aov->Resolve();
             }
-        });
+        }, m_isInteractive);
 
-        if (m_rifContext) {
+        if (m_rifContext && !interactive) {
             m_rifContext->ExecuteCommandQueue();
         }
 
-        for (auto& outRb : m_outputRenderBuffers) {
-            if (outRb.mappedData && (m_isFirstSample || outRb.isMultiSampled)) {
-                outRb.rprAov->GetData(outRb.mappedData, outRb.mappedDataSize);
-            }
-        }
+		if (interactive)
+		{
+			auto color = std::find_if(m_outputRenderBuffers.begin(), m_outputRenderBuffers.end(), [](const OutputRenderBuffer& buffer) { return buffer.aovName == "color";  });
+			if (color != m_outputRenderBuffers.end())
+			{
+				if (color->mappedData && (m_isFirstSample || color->isMultiSampled))
+				{
+					color->rprAov->GetData(color->mappedData, color->mappedDataSize, interactive);
+				}
+			}
+
+			auto primId = std::find_if(m_outputRenderBuffers.begin(), m_outputRenderBuffers.end(), [](const OutputRenderBuffer& buffer) { return buffer.aovName == "primId";  });
+			if (primId != m_outputRenderBuffers.end())
+			{
+				auto primIdData = reinterpret_cast<int*>((primId->mappedData));
+				for (size_t i = 0; i < primId->mappedDataSize / sizeof(int); ++i)
+				{
+					primIdData[i] = -1;
+				}
+			}
+		}
+		else
+		{
+			for (auto& outRb : m_outputRenderBuffers)
+			{
+				if (outRb.mappedData && (m_isFirstSample || outRb.isMultiSampled))
+				{
+					outRb.rprAov->GetData(outRb.mappedData, outRb.mappedDataSize, interactive);
+				}
+			}
+		}
 
         m_isFirstSample = false;
 
@@ -1525,6 +1553,13 @@ public:
             if (preferences.IsDirty(HdRprConfig::DirtyInteractiveMode) || m_isInteractive) {
                 m_dirtyFlags |= ChangeTracker::DirtyScene;
             }
+
+			if (m_isInteractive)
+			{
+				auto rprRenderParam = static_cast<HdRprRenderParam*>(m_delegate->GetRenderParam());
+				auto rprApi = rprRenderParam->GetRprApi();
+				m_resolveData.EnableInteractiveMode(rprApi, m_rifContext.get());
+			}
         }
 
         if (preferences.IsDirty(HdRprConfig::DirtyRenderMode) || force) {
@@ -1810,9 +1845,9 @@ public:
                     }
 
                     if (aov->GetDesc().computed) {
-                        m_resolveData.computedAovs.push_back({aov.get(), isMultiSampled});
+                        m_resolveData.computedAovs.push_back({aov.get(), isMultiSampled, it->first});
                     } else {
-                        m_resolveData.rawAovs.push_back({aov.get(), isMultiSampled});
+                        m_resolveData.rawAovs.push_back({aov.get(), isMultiSampled, it->first});
                     }
                     ++it;
                 } else {
@@ -1824,7 +1859,7 @@ public:
         if (m_dirtyFlags & ChangeTracker::DirtyViewport) {
             m_resolveData.ForAllAovs([this](ResolveData::AovEntry const& e) {
                 e.aov->Resize(m_viewportSize[0], m_viewportSize[1], e.aov->GetFormat());
-            });
+            }, m_isInteractive);
 
             // If AOV bindings are dirty then we already committed HdRprRenderBuffers, see SetAovBindings
             if ((m_dirtyFlags & ChangeTracker::DirtyAOVBindings) == 0) {
@@ -1859,7 +1894,7 @@ public:
             if (clearAovs) {
                 e.aov->Clear();
             }
-        });
+        }, m_isInteractive);
 
         if (clearAovs) {
             m_numSamples = 0;
@@ -1959,7 +1994,7 @@ public:
         if (data->rprApi->m_resolveMode == kResolveInRenderUpdateCallback) {
             // In batch, we do resolve from RUC only by request
             if (data->rprApi->m_batchREM->IsResolveRequested()) {
-                data->rprApi->ResolveFramebuffers();
+                data->rprApi->ResolveFramebuffers(false);
                 data->rprApi->m_batchREM->OnResolve();
             }
         }
@@ -1993,7 +2028,7 @@ public:
         // If the changes that were made by the user did not reset our AOVs,
         // we can just resolve them to the current render buffers and we are done with the rendering
         if (IsConverged()) {
-            ResolveFramebuffers();
+            ResolveFramebuffers(m_isInteractive);
             return false;
         }
 
@@ -2078,7 +2113,7 @@ public:
                 // In batch mode resolve only the first and the last frames or
                 // when the host app requested it explicitly
                 if (m_isFirstSample || m_batchREM->IsResolveRequested()) {
-                    ResolveFramebuffers();
+                    ResolveFramebuffers(m_isInteractive);
                     m_batchREM->OnResolve();
                 }
             }
@@ -2123,7 +2158,7 @@ public:
             }
         }
 
-        ResolveFramebuffers();
+        ResolveFramebuffers(m_isInteractive);
     }
 
     static void RenderUpdateCallback(float progress, void* dataPtr) {
@@ -2139,7 +2174,7 @@ public:
             int previousStep = static_cast<int>(data->previousProgress / kResolveFrequency);
             int currentStep = static_cast<int>(progress / kResolveFrequency);
             if (currentStep != previousStep) {
-                data->rprApi->ResolveFramebuffers();
+                data->rprApi->ResolveFramebuffers(false);
             }
         }
 
@@ -2187,7 +2222,7 @@ public:
             }
 
             if (m_resolveMode == kResolveAfterRender) {
-                ResolveFramebuffers();
+                ResolveFramebuffers(m_isInteractive);
             }
 
             if (IsAdaptiveSamplingEnabled() &&
@@ -2762,7 +2797,7 @@ private:
                 //   * reinterpret uchar4 data as int32_t (works on little-endian CPU only)
                 m_rprContext->SetAOVindexLookup(rpr_int(i),
                     float((i >> 0) & 0xFF) / 255.0f,
-                    float((i >> 8) & 0xFF) / 255.0f,
+                    float(((i + 1) >> 8) & 0xFF) / 255.0f,
                     0.0f, 0.0f);
             }
         }
@@ -2805,7 +2840,7 @@ private:
     }
 
     void InitAovs() {
-        auto initInternalAov = [this](TfToken const& name) {
+        /*auto initInternalAov = [this](TfToken const& name) {
             auto& aovDesc = HdRprAovRegistry::GetInstance().GetAovDesc(name);
             if (auto aov = CreateAov(name, 0, 0, aovDesc.format)) {
                 m_internalAovs.emplace(name, std::move(aov));
@@ -2827,7 +2862,7 @@ private:
         if (filterType == rif::FilterType::EawDenoise) {
             initInternalAov(HdAovTokens->primId);
             initInternalAov(HdRprAovTokens->worldCoordinate);
-        }
+        }*/
 
         m_lpeAovPool.clear();
         m_lpeAovPool.insert(m_lpeAovPool.begin(), {
@@ -3268,7 +3303,10 @@ private:
                 blitFilter->SetInput(rif::Color, blitFilter->GetOutput());
                 blitFilter->Update();
 
-                m_rifContext->ExecuteCommandQueue();
+				if (!m_isInteractive)
+				{
+					m_rifContext->ExecuteCommandQueue();
+				}
 
                 if (RIF_ERROR_CHECK(rifImageMap(blitFilter->GetOutput(), RIF_IMAGE_MAP_READ, &mappedData), "Failed to map rif image") || !mappedData) {
                     return false;
@@ -3410,14 +3448,32 @@ private:
         struct AovEntry {
             HdRprApiAov* aov;
             bool isMultiSampled;
+			std::string name;
         };
         std::vector<AovEntry> rawAovs;
         std::vector<AovEntry> computedAovs;
 
+		void EnableInteractiveMode(HdRprApi const* rprApi, rif::Context* rifContext)
+		{
+			// for (auto& aov : rawAovs) { aov.aov->Clear(); }
+			// for (auto& aov : computedAovs) { aov.aov->Clear(); }
+		}
+
         template <typename F>
-        void ForAllAovs(F&& f) {
-            for (auto& aov : rawAovs) { f(aov); }
-            for (auto& aov : computedAovs) { f(aov); }
+        void ForAllAovs(F&& f, bool interactive) {
+			if (interactive)
+			{
+				auto colorAov = std::find_if(rawAovs.begin(), rawAovs.end(), [](const AovEntry& aov) { return aov.name == std::string("rawColor"); });
+				if (colorAov != rawAovs.end())
+				{
+					f(*colorAov);
+				}
+			}
+			else
+			{
+				for (auto& aov : rawAovs) { f(aov); }
+				for (auto& aov : computedAovs) { f(aov); }
+			}
         }
     };
     ResolveData m_resolveData;

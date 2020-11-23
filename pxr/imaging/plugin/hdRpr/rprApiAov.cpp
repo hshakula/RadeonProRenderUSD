@@ -107,8 +107,8 @@ void HdRprApiAov::Clear() {
     }
 }
 
-bool HdRprApiAov::GetDataImpl(void* dstBuffer, size_t dstBufferSize) {
-    if (m_filter) {
+bool HdRprApiAov::GetDataImpl(void* dstBuffer, size_t dstBufferSize, bool interactive) {
+    if (m_filter && !interactive) {
         return ReadRifImage(m_filter->GetOutput(), dstBuffer, dstBufferSize);
     }
 
@@ -120,8 +120,11 @@ bool HdRprApiAov::GetDataImpl(void* dstBuffer, size_t dstBufferSize) {
     return resolvedFb->GetData(dstBuffer, dstBufferSize);
 }
 
-bool HdRprApiAov::GetData(void* dstBuffer, size_t dstBufferSize) {
-    if (GetDataImpl(dstBuffer, dstBufferSize)) {
+bool HdRprApiAov::GetData(void* dstBuffer, size_t dstBufferSize, bool interactive) {
+
+	// TODO: try to parallel
+
+    if (GetDataImpl(dstBuffer, dstBufferSize, interactive)) {
         if (m_format == HdFormatInt32) {
             // RPR store integer ID values to RGB images using such formula:
             // c[i].x = i;
@@ -404,15 +407,15 @@ void HdRprApiColorAov::Update(HdRprApi const* rprApi, rif::Context* rifContext) 
     }
 }
 
-bool HdRprApiColorAov::GetData(void* dstBuffer, size_t dstBufferSize) {
-    if (!m_filter) {
+bool HdRprApiColorAov::GetData(void* dstBuffer, size_t dstBufferSize, bool interactive) {
+    if (!m_filter || interactive) {
         if (auto resolvedRawColorFb = m_retainedRawColor->GetResolvedFb()) {
             return resolvedRawColorFb->GetData(dstBuffer, dstBufferSize);
         } else {
             return false;
         }
     } else {
-        return HdRprApiAov::GetData(dstBuffer, dstBufferSize);
+        return HdRprApiAov::GetData(dstBuffer, dstBufferSize, interactive);
     }
 }
 
