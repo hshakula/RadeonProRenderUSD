@@ -17,7 +17,9 @@ limitations under the License.
 PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PRIVATE_TOKENS(HdRprGeometryPrimvarTokens,
+    ((id, "rpr:id"))
     ((subdivisionLevel, "rpr:subdivisionLevel"))
+    ((ignoreContour, "rpr:ignoreContour"))
     ((visibilityPrimary, "rpr:visibilityPrimary"))
     ((visibilityShadow, "rpr:visibilityShadow"))
     ((visibilityReflection, "rpr:visibilityReflection"))
@@ -49,11 +51,15 @@ void HdRprParseGeometrySettings(
     };
 
     for (auto& desc : constantPrimvarDescs) {
-        if (desc.name == HdRprGeometryPrimvarTokens->subdivisionLevel) {
+        if (desc.name == HdRprGeometryPrimvarTokens->id) {
+            HdRprGetConstantPrimvar(HdRprGeometryPrimvarTokens->id, sceneDelegate, id, &geomSettings->id);
+        } else if (desc.name == HdRprGeometryPrimvarTokens->subdivisionLevel) {
             int subdivisionLevel;
             if (HdRprGetConstantPrimvar(HdRprGeometryPrimvarTokens->subdivisionLevel, sceneDelegate, id, &subdivisionLevel)) {
                 geomSettings->subdivisionLevel = std::max(0, std::min(subdivisionLevel, 7));
             }
+        } else if (desc.name == HdRprGeometryPrimvarTokens->ignoreContour) {
+            HdRprGetConstantPrimvar(HdRprGeometryPrimvarTokens->ignoreContour, sceneDelegate, id, &geomSettings->ignoreContour);
         } else if (desc.name == HdRprGeometryPrimvarTokens->visibilityPrimary) {
             setVisibilityFlag(HdRprGeometryPrimvarTokens->visibilityPrimary, kVisiblePrimary);
         } else if (desc.name == HdRprGeometryPrimvarTokens->visibilityShadow) {
@@ -93,7 +99,17 @@ void HdRprFillPrimvarDescsPerInterpolation(
         HdInterpolationInstance,
     };
     for (auto& interpolation : interpolations) {
-        primvarDescsPerInterpolation->emplace(interpolation, sceneDelegate->GetPrimvarDescriptors(id, interpolation));
+        auto primvarDescs = sceneDelegate->GetPrimvarDescriptors(id, interpolation);
+        if (!primvarDescs.empty()) {
+            primvarDescsPerInterpolation->emplace(interpolation, std::move(primvarDescs));
+        }
+    }
+
+    // If primitive has no primvars,
+    // insert dummy entry so that the next time user calls this function,
+    // it will not rerun sceneDelegate->GetPrimvarDescriptors which is quite costly
+    if (primvarDescsPerInterpolation->empty()) {
+        primvarDescsPerInterpolation->emplace(HdInterpolationCount, HdPrimvarDescriptorVector{});
     }
 }
 

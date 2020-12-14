@@ -9,25 +9,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # 
-import subprocess
 import argparse
-import sys
 import os
+
+import generateGeometrySettingFiles
+import generateRenderSettingFiles
+import generateLightSettingFiles
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument('scripts_dir', help="Directory with scripts")
     p.add_argument("install", help="The install root for generated files.")
-    p.add_argument("--houdini_root", help="The install root for generated files.")
+    p.add_argument("--for_houdini", action="store_true")
     args = p.parse_args()
 
-    generate_ds_files = []
-    if args.houdini_root:
-        # Generator of DialogScript files requires access to houdini's python modules
-        generate_ds_files = ['--generate_ds_files']
-        os.environ['PATH'] = os.environ.get('PATH', '') + os.pathsep + os.path.join(args.houdini_root, 'bin')
-        os.environ['PYTHONPATH'] = os.environ.get('PYTHONPATH', '') + os.pathsep + os.path.join(os.path.join(args.houdini_root, 'houdini'), 'python2.7libs')
-
-    subprocess.check_call([sys.executable, os.path.join(args.scripts_dir, 'generateLightSettingFiles.py'), args.install] + generate_ds_files)
-    subprocess.check_call([sys.executable, os.path.join(args.scripts_dir, 'generateRenderSettingFiles.py'), args.install] + generate_ds_files)
-    subprocess.check_call([sys.executable, os.path.join(args.scripts_dir, 'generateGeometrySettingFiles.py'), args.install] + generate_ds_files)
+    generateGeometrySettingFiles.generate(args.install, args.for_houdini)
+    generateRenderSettingFiles.generate(args.install, args.for_houdini)
+    generateLightSettingFiles.generate(args.install, args.for_houdini)

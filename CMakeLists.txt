@@ -29,13 +29,17 @@ include(Public)
 
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(${USD_INCLUDE_DIR})
-link_directories(${USD_LIBRARY_DIR})
-include_directories(${RPR_INCLUDE_DIR})
-link_directories(${RPR_LIBRARY_DIR})
 
-add_subdirectory(pxr/imaging/plugin/hdRpr)
+add_subdirectory(deps)
+add_subdirectory(pxr/imaging)
 
 install(FILES README.md DESTINATION .)
 install(FILES INSTALL.md DESTINATION .)
 install(FILES LICENSE.md DESTINATION .)
+
+install(
+    CODE
+    "FILE(WRITE \"${CMAKE_INSTALL_PREFIX}/version\"
+\"core:${RPR_VERSION_STRING}
+plugin:${HD_RPR_MAJOR_VERSION}.${HD_RPR_MINOR_VERSION}.${HD_RPR_PATCH_VERSION}
+\")")

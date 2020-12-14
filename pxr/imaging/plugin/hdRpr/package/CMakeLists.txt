@@ -1,10 +1,6 @@
-if(HoudiniUSD_FOUND)
-    install(FILES activateHoudiniPlugin.py DESTINATION .)
-endif()
-
 set(USD_MINOR_VERSION "0")
 set(USD_MAJOR_VERSION "0")
-get_target_property(USD_INCLUDE_DIRS arch INTERFACE_INCLUDE_DIRECTORIES)
+get_target_property(USD_INCLUDE_DIRS ar INTERFACE_INCLUDE_DIRECTORIES)
 if(USD_INCLUDE_DIRS)
     foreach(dir ${USD_INCLUDE_DIRS})
         if(EXISTS "${dir}/pxr/pxr.h")
@@ -37,7 +33,8 @@ if(DUMP_PACKAGE_FILE_NAME)
     set(PACKAGE_VERSION "${HD_RPR_MAJOR_VERSION}.${HD_RPR_MINOR_VERSION}.${HD_RPR_PATCH_VERSION}")
 
     if(HoudiniUSD_FOUND)
-        set(TARGET "Houdini-${Houdini_VERSION}")
+        set(TARGET "Houdini-${Houdini_VERSION}-py${_houdini_python_version}")
+
     else()
         set(TARGET "USD-${USD_MINOR_VERSION}.${USD_PATCH_VERSION}")
     endif()

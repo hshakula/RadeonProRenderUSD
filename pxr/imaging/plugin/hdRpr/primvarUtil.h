@@ -36,14 +36,28 @@ bool HdRprIsValidPrimvarSize(
     size_t vertexInterpolationSize);
 
 struct HdRprGeometrySettings {
-    uint32_t visibilityMask = 0;
+    int id = -1;
     int subdivisionLevel = 0;
+    uint32_t visibilityMask = 0;
+    bool ignoreContour = false;
 };
 
 void HdRprParseGeometrySettings(
     HdSceneDelegate* sceneDelegate, SdfPath const& id,
     HdPrimvarDescriptorVector const& constantPrimvarDescs,
     HdRprGeometrySettings* geomSettings);
+
+inline void HdRprParseGeometrySettings(
+    HdSceneDelegate* sceneDelegate, SdfPath const& id,
+    std::map<HdInterpolation, HdPrimvarDescriptorVector> const& primvarDescsPerInterpolation,
+    HdRprGeometrySettings* geomSettings) {
+    auto constantPrimvarDescIt = primvarDescsPerInterpolation.find(HdInterpolationConstant);
+    if (constantPrimvarDescIt == primvarDescsPerInterpolation.end()) {
+        return;
+    }
+
+    HdRprParseGeometrySettings(sceneDelegate, id, constantPrimvarDescIt->second, geomSettings);
+}
 
 template <typename T>
 bool HdRprGetConstantPrimvar(TfToken const& name, HdSceneDelegate* sceneDelegate, SdfPath const& id, T* out_value) {

@@ -1,17 +1,19 @@
 # This finds Pixar USD which is part of a Houdini installation.
 
+set(HOUDINI_ROOT $ENV{HFS} CACHE PATH "Houdini installation directory")
+
 set(HUSD_REQ_VARS "")
 
 find_path(Houdini_USD_INCLUDE_DIR
     "pxr/pxr.h"
-    PATHS ENV HFS
+    PATHS ${HOUDINI_ROOT}
     PATH_SUFFIXES "toolkit/include"
     NO_DEFAULT_PATH)
 list(APPEND HUSD_REQ_VARS "Houdini_USD_INCLUDE_DIR")
 
 find_path(Houdini_USD_LIB_DIR
     "libpxr_tf${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    PATHS ENV HFS
+    PATHS ${HOUDINI_ROOT}
     PATH_SUFFIXES
         "dsolib" # Linux and Windows
         "../Libraries" # macOS
@@ -22,65 +24,93 @@ list(APPEND HUSD_REQ_VARS "Houdini_USD_LIB_DIR")
 if(WIN32)
     find_path(Houdini_USD_IMPLIB_DIR
         "libpxr_tf.lib"
-        PATHS ENV HFS
+        PATHS ${HOUDINI_ROOT}
         PATH_SUFFIXES "custom/houdini/dsolib" # Windows (import lib)
         NO_DEFAULT_PATH)
     list(APPEND HUSD_REQ_VARS "Houdini_USD_IMPLIB_DIR")
 endif()
 
-find_path(Houdini_Python_INCLUDE_DIR
-    "pyconfig.h"
-    PATHS ENV HFS
-    PATH_SUFFIXES
-        "toolkit/include/python2.7"
-        "toolkit/include/python3.7"
-        "toolkit/include/python3.7m"
-    NO_DEFAULT_PATH)
-list(APPEND HUSD_REQ_VARS "Houdini_Python_INCLUDE_DIR")
+if(APPLE)
+    find_library(Houdini_TBB_LIB
+        NAMES tbb
+        PATHS ${HOUDINI_ROOT}
+        PATH_SUFFIXES "../Libraries"
+        NO_DEFAULT_PATH)
+endif(APPLE)
 
-find_file(
-    Houdini_Python_LIB
-    NAMES
-        "libpython2.7${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
-        "libpython3.7m${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
-        #"python27.dll" "python37.dll" # Windows
-        "python27.lib" "python37.lib" # Windows (import lib)
-    PATHS ENV HFS
-    PATH_SUFFIXES
-        "python/lib" # Linux
-        "../../../../Python.framework/Versions/Current/lib" # macOS
-        #"bin" # Windows
-        "python27/libs" "python37/libs" # Windows (import lib)
-    NO_DEFAULT_PATH)
-list(APPEND HUSD_REQ_VARS "Houdini_Python_LIB")
+set(Houdini_Python_VARS Houdini_Python_INCLUDE_DIR Houdini_Python_LIB Houdini_Boostpython_LIB)
+list(APPEND HUSD_REQ_VARS ${Houdini_Python_VARS})
 
-find_file(
-    Houdini_Boostpython_LIB
-    "libhboost_python-mt${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
-    "hboost_python-mt.lib" # Windows (import lib)
-    PATHS ENV HFS
-    PATH_SUFFIXES
-        "dsolib" # Linux
-        "../Libraries" # macOS
-        #"bin" # Windows
-        "custom/houdini/dsolib" # Windows (import lib)
-    NO_DEFAULT_PATH)
-list(APPEND HUSD_REQ_VARS "Houdini_Boostpython_LIB")
+foreach(python_major_minor "2;7" "3;7")
+    list(GET python_major_minor 0 py_major)
+    list(GET python_major_minor 1 py_minor)
+
+    foreach(var ${Houdini_Python_VARS})
+        set(${var} ${var}-NOTFOUND)
+    endforeach()
+
+    find_path(
+        Houdini_Python_INCLUDE_DIR
+            "pyconfig.h"
+        PATHS ${HOUDINI_ROOT}/toolkit/include
+        PATH_SUFFIXES
+            "python${py_major}.${py_minor}"
+            "python${py_major}.${py_minor}m" # macOS Houdini 18.5
+        NO_DEFAULT_PATH)
+
+    find_file(
+        Houdini_Python_LIB
+        NAMES
+            "libpython${py_major}.${py_minor}${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
+            "libpython${py_major}.${py_minor}m${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix Houdini 18.5
+            "python${py_major}${py_minor}.lib" # Windows (import lib)
+        PATHS ${HOUDINI_ROOT}
+        PATH_SUFFIXES
+            "python/lib" # Linux
+            "../../../../Python.framework/Versions/Current/lib" # macOS
+            "python${py_major}${py_minor}/libs" # Windows (import lib)
+        NO_DEFAULT_PATH)
+
+    find_file(
+        Houdini_Boostpython_LIB
+        "libhboost_python-mt${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
+        "libhboost_python${py_major}${py_minor}-mt-x64${CMAKE_SHARED_LIBRARY_SUFFIX}" # Unix
+        "hboost_python-mt.lib" # Windows (import lib)
+        "hboost_python${py_major}${py_minor}-mt-x64.lib" # Windows Houdini 18.5
+        PATHS ${HOUDINI_ROOT}
+        PATH_SUFFIXES
+            "dsolib" # Linux
+            "../Libraries" # macOS
+            "custom/houdini/dsolib" # Windows (import lib)
+        NO_DEFAULT_PATH)
+
+    set(Houdini_Python_FOUND TRUE)
+    foreach(var ${Houdini_Python_VARS})
+        if(NOT ${var})
+            set(Houdini_Python_FOUND FALSE)
+        endif()
+    endforeach()
+
+    if(Houdini_Python_FOUND)
+        break()
+    endif()
+endforeach()
 
 find_program(HYTHON_EXECUTABLE hython
-    PATHS ENV HFS
+    PATHS ${HOUDINI_ROOT}
     PATH_SUFFIXES bin)
 if(NOT HYTHON_EXECUTABLE)
     message(FATAL "Could not find hython executable")
 endif()
 list(APPEND HUSD_REQ_VARS "HYTHON_EXECUTABLE")
+set(PYTHON_EXECUTABLE ${HYTHON_EXECUTABLE})
 
 if(WIN32)
-    set(Houdini_LIB_DIR $ENV{HFS}/custom/houdini/dsolib)
+    set(Houdini_LIB_DIR ${HOUDINI_ROOT}/custom/houdini/dsolib)
 elseif(APPLE)
-    set(Houdini_LIB_DIR $ENV{HFS}/../Libraries)
+    set(Houdini_LIB_DIR ${HOUDINI_ROOT}/../Libraries)
 else()
-    set(Houdini_LIB_DIR $ENV{HFS}/dsolib)
+    set(Houdini_LIB_DIR ${HOUDINI_ROOT}/dsolib)
 endif()
 
 include(FindPackageHandleStandardArgs)
@@ -117,20 +147,19 @@ if(HoudiniUSD_FOUND AND NOT TARGET hd)
             set_target_properties(${targetName} PROPERTIES
                 IMPORTED_IMPLIB "${Houdini_USD_IMPLIB_DIR}/libpxr_${targetName}.lib")
         endif()
-        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            # Houdini builds with the old ABI. We need to match.
-            target_compile_definitions(${targetName}
-                INTERFACE "_GLIBCXX_USE_CXX11_ABI=0")
-        endif()
         if(WIN32)
             # Shut up compiler about warnings from USD.
             target_compile_options(${targetName} INTERFACE
                 "/wd4506" "/wd4244" "/wd4305" "/wd4267")
             # For automatically linked libraries (python, tbb)
             target_link_directories(${targetName}
-                INTERFACE "$ENV{HFS}/custom/houdini/dsolib")
+                INTERFACE "${HOUDINI_ROOT}/custom/houdini/dsolib")
         endif()
     endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Houdini builds with the old ABI. We need to match.
+        add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
+    endif()
     # Add python to tf, usdImagingGL targets.
     target_include_directories(tf INTERFACE ${Houdini_Python_INCLUDE_DIR})
     target_link_libraries(tf INTERFACE ${Houdini_Python_LIB})
@@ -141,4 +170,9 @@ if(HoudiniUSD_FOUND AND NOT TARGET hd)
     # more than enough to get it linked in for us.
     target_link_libraries(tf INTERFACE ${Houdini_Boostpython_LIB})
     target_link_libraries(vt INTERFACE ${Houdini_Boostpython_LIB})
+    if(APPLE)
+        target_link_libraries(tf INTERFACE ${Houdini_TBB_LIB})
+    endif(APPLE)
+    # By default Boost links libraries implicitly for the user via pragma's, we do not want this
+    target_compile_definitions(tf INTERFACE -DHBOOST_ALL_NO_LIB)
 endif()

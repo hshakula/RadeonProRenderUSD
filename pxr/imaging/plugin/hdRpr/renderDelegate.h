@@ -83,6 +83,7 @@ public:
     bool IsStopSupported() const override;
     bool Stop() override;
     bool Restart() override;
+    void SetDrivers(HdDriverVector const& drivers) override;
 #endif // PXR_VERSION >= 2005
 
     bool IsBatch() const { return m_isBatch; }
@@ -105,19 +106,19 @@ private:
     DiagnostMgrDelegatePtr m_diagnosticMgrDelegate;
 };
 
-TfToken const& HdRprUtilsGetCameraDepthName();
 
 PXR_NAMESPACE_CLOSE_SCOPE
 
 extern "C" {
 
-HDRPR_API void SetHdRprRenderDevice(int renderDevice);
+HDRPR_API void HdRprSetRenderDevice(const char* renderDevice);
 
-HDRPR_API void SetHdRprRenderQuality(int quality);
+HDRPR_API void HdRprSetRenderQuality(const char* quality);
 
-HDRPR_API int GetHdRprRenderQuality();
+// Returned pointer should be released by the caller with HdRprFree
+HDRPR_API char* HdRprGetRenderQuality();
 
-HDRPR_API int HdRprExportRprSceneOnNextRender(const char* exportPath);
+HDRPR_API void HdRprFree(void* ptr);
 
 } // extern "C"
 

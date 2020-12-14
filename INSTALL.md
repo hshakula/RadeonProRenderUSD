@@ -15,7 +15,10 @@ Add a new Houdini package with such configuration json:
             "HOUDINI_PATH":"$RPR/houdini"
         },
         {
-            "PATH":"$RPR/bin"
+            "PATH":"$RPR/lib"
+        },
+        {
+            "PYTHONPATH":"$RPR/lib/python"
         }
     ]
 }
@@ -26,16 +29,20 @@ More info here https://www.sidefx.com/docs/houdini/ref/plugins.html
 
 #### Automatic
 
-`activateHoudiniPlugin.py` script can do the same for you automatically - it will try to find your houdini preference dir and add hdRpr package that will point to the current directory.
+`activateHoudiniPlugin` executable can do the same for you automatically - it will try to find your houdini preference dir and add hdRpr package that will point to the current directory.
 
 ### Usdview plugin
 
-Add hdRpr package path entry to the `PXR_PLUGINPATH_NAME` environment variable.
-Also, for windows you need to add the bin folder of the package to the `PATH` environment variable.
+Here and next, HDRPR_PACKAGE_DIR is a path to the root of the package.
+
+* Set `RPR` environment variable to `HDRPR_PACKAGE_DIR` 
+* Add `HDRPR_PACKAGE_DIR/plugin` path entry to the `PXR_PLUGINPATH_NAME` environment variable
+* Add `HDRPR_PACKAGE_DIR/lib/python` path entry to the `PYTHONPATH` environment variable
+* Windows only: add the `HDRPR_PACKAGE_DIR/lib` path entry to the `PATH` environment variable
 
 OR
 
-You can copy hdRpr package directories (bin, lib and plugin) directly to the root of your USD package.
+You can copy hdRpr package directories (lib and plugin) directly to the root of your USD package.
 
 ## Installation from sources
 
