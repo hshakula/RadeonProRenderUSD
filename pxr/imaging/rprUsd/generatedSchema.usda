@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    "WARNING: THIS FILE IS GENERATED.  DO NOT EDIT."
+    customLayerData = {
+        string[] appliedAPISchemas = ["RenderSettingsAPI"]
+        dictionary multipleApplyAPISchemas = {
+        }
+    }
+)
+
+class "RenderSettingsAPI" (
+    doc = "."
+)
+{
+    token rpr:global:quality = "Full2" (
+        allowedTokens = ["Low", "Medium", "High", "FullLegacy", "Full"]
+        doc = "."
+    )
+}
+

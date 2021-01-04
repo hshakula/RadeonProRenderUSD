@@ -1,0 +1,38 @@
+#usda 1.0
+(
+    subLayers = [
+        @usd/schema.usda@
+    ]
+)
+
+over "GLOBAL" (
+    customData = {
+        string libraryName       = "rprUsd"
+        string libraryPath       = "./"
+        string libraryPrefix     = "RprUsd"
+        dictionary libraryTokens = {
+        	dictionary rpr = {}
+            dictionary id = {
+                string value = "rpr:id"
+                string doc = """TODO: move to RprMaterialAPI"""
+            }
+        }
+    }
+) {
+}
+
+class "RenderSettingsAPI" (
+    inherits = </APISchemaBase>
+    customData = {
+        token apiSchemaType = "singleApply"
+    }
+    doc = """."""
+) {
+	token rpr:global:quality = "Full" (
+        allowedTokens = ["Low", "Medium", "High", "FullLegacy", "Full"]
+        customData = {
+            string apiName = "quality"
+        }
+        doc = """."""
+    )
+}

@@ -11,34 +11,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ************************************************************************/
 
-#include ".//tokens.h"
+#include "{{ libraryPath }}/tokens.h"
 
-PXR_NAMESPACE_OPEN_SCOPE
+{% if useExportAPI %}
+{{ namespaceOpen }}
 
-RprUsdTokensType::RprUsdTokensType() :
-    full("Full", TfToken::Immortal),
-    full2("Full2", TfToken::Immortal),
-    fullLegacy("FullLegacy", TfToken::Immortal),
-    high("High", TfToken::Immortal),
-    id("rpr:id", TfToken::Immortal),
-    low("Low", TfToken::Immortal),
-    medium("Medium", TfToken::Immortal),
-    rpr("rpr", TfToken::Immortal),
-    rprGlobalQuality("rpr:global:quality", TfToken::Immortal),
+{% endif %}
+{{ tokensPrefix }}TokensType::{{ tokensPrefix }}TokensType() :
+{% for token in tokens %}
+    {{ token.id }}("{{ token.value }}", TfToken::Immortal),
+{% endfor %}
     allTokens({
-        full,
-        full2,
-        fullLegacy,
-        high,
-        id,
-        low,
-        medium,
-        rpr,
-        rprGlobalQuality
+{% for token in tokens %}
+        {{ token.id }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
     })
 {
 }
 
-TfStaticData<RprUsdTokensType> RprUsdTokens;
+TfStaticData<{{ tokensPrefix }}TokensType> {{ tokensPrefix }}Tokens;
+{% if useExportAPI %}
 
-PXR_NAMESPACE_CLOSE_SCOPE
+{{ namespaceClose }}
+{% endif %}

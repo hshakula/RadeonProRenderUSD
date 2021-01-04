@@ -1149,7 +1149,7 @@ function(_pxr_library NAME)
             set(libInstallPrefix "${pluginInstallPrefix}")
         endif()
     else()
-        _get_install_dir("share/usd/plugins" pluginInstallPrefix)
+        _get_install_dir("plugin/usd" pluginInstallPrefix)
     endif()
     if(args_SUBDIR)
         set(libInstallPrefix "${libInstallPrefix}/${args_SUBDIR}")
@@ -1166,7 +1166,7 @@ function(_pxr_library NAME)
     # relative one.
     _get_python_module_name(${NAME} pythonModuleName)
     string(TOUPPER ${NAME} uppercaseName)
-    set(installLocation "${CMAKE_INSTALL_PREFIX}/share/usd/plugins")
+    set(installLocation "${CMAKE_INSTALL_PREFIX}/plugin/usd")
     if(PXR_INSTALL_LOCATION)
         file(TO_CMAKE_PATH "${PXR_INSTALL_LOCATION}" installLocation)
     endif()
@@ -1233,7 +1233,7 @@ function(_pxr_library NAME)
             MFB_PACKAGE_NAME=${PXR_PACKAGE}
             MFB_ALT_PACKAGE_NAME=${PXR_PACKAGE}
             MFB_PACKAGE_MODULE=${pythonModuleName}
-            "PXR_BUILD_LOCATION=../share/usd/plugins"
+            "PXR_BUILD_LOCATION=../plugin/usd"
             "PXR_PLUGIN_BUILD_LOCATION=../plugin/usd"
             "PXR_INSTALL_LOCATION=${installLocation}"
             ${pythonModulesEnabled}

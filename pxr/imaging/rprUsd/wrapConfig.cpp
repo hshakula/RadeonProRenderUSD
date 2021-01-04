@@ -23,7 +23,7 @@ using namespace BOOST_NS::python;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-void wrapConfig() {
+void wrapRprUsdConfig() {
 
 #define CONFIG_SETTER(setter, type) \
     .def(#setter, +[](type value) { \

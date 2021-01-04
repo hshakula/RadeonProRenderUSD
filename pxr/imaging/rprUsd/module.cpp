@@ -18,5 +18,9 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 TF_WRAP_MODULE
 {
-    TF_WRAP(Config);
+    TF_WRAP(RprUsdConfig);
+
+    // Generated schema.
+    TF_WRAP(RprUsdTokens);
+    TF_WRAP(RprUsdRenderSettingsAPI);
 }

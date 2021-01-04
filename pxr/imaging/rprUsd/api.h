@@ -11,8 +11,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ************************************************************************/
 
-#ifndef PXR_IMAGING_RPR_USD_API_H
-#define PXR_IMAGING_RPR_USD_API_H
+#ifndef PXR_IMAGING_RPRUSD_API_H
+#define PXR_IMAGING_RPRUSD_API_H
 
 #include "pxr/base/arch/export.h"
 
@@ -34,4 +34,4 @@ limitations under the License.
 #   define RPRUSD_LOCAL ARCH_HIDDEN
 #endif
 
-#endif // PXR_IMAGING_RPR_USD_API_H
+#endif

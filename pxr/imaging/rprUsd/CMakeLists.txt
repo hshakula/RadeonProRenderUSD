@@ -9,8 +9,10 @@ pxr_library(rprUsd
         tf
         vt
         hd
+        usd
         glf
         sdf
+        plug
         arch
         work
         cpprpr
@@ -27,6 +29,7 @@ pxr_library(rprUsd
         material
         materialMappings
         materialRegistry
+        renderSettingsAPI
 
     PUBLIC_HEADERS
         api.h
@@ -43,9 +46,16 @@ pxr_library(rprUsd
     PYMODULE_CPPFILES
         module.cpp
         wrapConfig.cpp
+        wrapTokens.cpp
+        wrapRenderSettingsAPI.cpp
 
     PYMODULE_FILES
         __init__.py
+
+    RESOURCE_FILES
+        plugInfo.json
+        generatedSchema.usda
+        schema.usda${PXR_RESOURCE_FILE_SRC_DST_SEPARATOR}rprUsd/schema.usda
 )
 
 if(HoudiniUSD_FOUND)
